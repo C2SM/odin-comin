@@ -1,0 +1,103 @@
+## Compiling icon-nwp with support for ComIn (most of it based or copied from Kutay Dönmez)
+
+git clone --recurse-submodules -b icon-2024.10-dwd-3.0 git@gitlab.dkrz.de:icon/icon-nwp.git
+
+icon using uenv:
+# based on spack v0.23, use icon recipe from the same spack version (which has depends_on('cxx') etc..)
+# pull this uenv before, see UENV documentation
+uenv image pull prgenv-gnu/24.11:v1
+uenv start --view=spack prgenv-gnu/24.11:v1
+git clone -b releases/v0.23 https://github.com/spack/spack
+source spack/share/spack/setup-env.sh
+
+# you dont need to do this if you did not install and compile spack from scratch:
+spack edit icon
+Add the following flags under gcc compiler in packages.py:
+    flags["LDFLAGS"].append("-Wl,--copy-dt-needed-entries")
+    flags["ICON_FCFLAGS"].append("-fallow-argument-mismatch")
+    flags["ICON_OCEAN_FCFLAGS"].extend(["-O3", "-fno-tree-loop-vectorize", "-fallow-argument-mismatch"])
+
+export SPACK_SYSTEM_CONFIG_PATH=/user-environment/config/
+
+
+# now we create a spack env, called my-icon
+spack env create -d my-icon
+spack -e ./my-icon add icon
+# Add additional specs manually in the file: +rte-rrtmgp +art +grib2 +comin
+spack -e ./my-icon develop -p /path/to/icon-source-dir icon@=<version> # (i.e for me it was spack -e ./my-icon develop -p /capstor/scratch/cscs/zhug/icon-nwp icon@=icon-2024.10-dwd-3.0)
+spack -e ./my-icon add py-numpy py-scipy
+spack -e ./my-icon concretize -f
+# check output, it must contain cray-mpich, py-numpy and py-scipy in the dependencies
+spack -e ./my-icon install
+ 
+# find icon installation binary file
+spack find -lp icon
+# This prints the installation directory, it should contain a directory bin with the executables. You can use the absolute path to this executable directly, without load spack, the uenv must still be loaded though.
+ 
+
+# to build comin plugins:
+spack env activate -p -d ./my-icon/
+uenv start --view=spack prgenv-gnu/24.11:v1
+source spack/share/spack/setup-env.sh
+export SPACK_SYSTEM_CONFIG_PATH=/user-environment/config/
+# you need to create a new bash for development purposes with a command
+spack build-env icon -- bash
+# it is normal for the bash to look like the old, except you dont see environment anymore. you can use the command exit to get out of the development environment which will return back to bash with spack environment on.
+# next, inside icon-nwp
+cd externals/comin/build && cmake -DCOMIN_ENABLE_EXAMPLES=ON -DCOMIN_ENABLE_PYTHON_ADAPTER=ON .
+cd externals/comin/build && make
+
+# So, now we have fully compiled icon and the comin plugins. Now, you still need to add the following in your runscript, assuming you already have one and just want to use an existing setup now with comin:
+
+# Firstly, tell icon to enable comin, copy paste this into the nml part of your runscript: (you will need to change the paths to your personal paths)
+# The libpython_adapter should always be in icon-nwp/externals/comin/build/plugins/python_adapter/
+# The options parameter is just the python file you have coded your plugin in, you can start of by using one of the examples from comin
+# (for example point_source.py), stored in icon-nwp/externals/comin/plugins/python_adapter/examples
+
+! comin_nml: comin tool ---------------------------------------------
+&comin_nml                                                                  
+plugin_list(1)%name          = "comin_plugin"
+plugin_list(1)%plugin_library = "/capstor/scratch/cscs/zhug/icon-nwp/externals/comin/build/plugins/python_adapter/libpython_adapter.so"
+plugin_list(1)%options        = "/capstor/scratch/cscs/zhug/Romania6km/python-zeno/point_source.py"
+
+/
+
+# I personally still had issues, as icon didn't find my installed numpy and scipy. So I then had to explicitly export the paths to those packages
+# So, step 1 is finding out where the numpy and scipy are located:
+spack location -i py-numpy
+spack location -i py-scipy
+# Export the python modules (add this in jobscript)
+export PYTHONPATH=/path/to/py-numpy/lib/python3.11/site-packages:/path/to/py-scipy/lib/python3.11/site-packages:$PYTHONPATH
+
+
+# In general, as soon as you want to use a new library in your .py file, that isn't installed yet use the following:
+# Activate spack environment
+uenv start --view=spack prgenv-gnu/24.11:v1
+source spack/share/spack/setup-env.sh
+export SPACK_SYSTEM_CONFIG_PATH=/user-environment/config/
+spack env activate -p -d ./my-icon
+
+# Add required packages, install
+spack -e ./my-icon add <new-library>
+spack -e ./my-icon concretize -f
+spack -e ./my-icon install
+
+# If when trying to run icon can't find the libraries:
+# Find installed package
+spack location -i <library>
+
+# Export the python modules (add this in jobscript)
+export PYTHONPATH=/path/to/<library>/lib/python3.11/site-packages:$PYTHONPATH
+
+
+
+
+## Running icon with Comin:
+# Before submitting the job, run the following (only needed if in new terminal, if you have already run once, no need to do it again in the same terminal)
+# Change path to your spack path
+source /capstor/scratch/cscs/zhug/spack/share/spack/setup-env.sh
+uenv start --view=spack prgenv-gnu/24.11:v1
+export SPACK_SYSTEM_CONFIG_PATH=/user-environment/config/
+export FI_CXI_OPTIMIZED_MRS=false
+
+# Now you can sbatch your runscript
