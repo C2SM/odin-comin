@@ -1,0 +1,3 @@
+slurm-*.out
+venv-plot
+simulation_outer_domain
