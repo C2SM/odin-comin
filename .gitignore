@@ -1,3 +1,4 @@
 slurm-*.out
 venv-plot
 simulation_outer_domain
+icbc_outer
