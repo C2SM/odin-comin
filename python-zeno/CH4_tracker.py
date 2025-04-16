@@ -106,8 +106,6 @@ def tracking_CH4_total():
     # Now this is where we log the averaged CH4, currently it is done by just storing it in the local monitoring stations variable, will do differently in future
     if (dtime * number_of_timesteps >= time_interval):
         for i in range(len(local_monitoring_stations)):
-            # avg_CH4 = local_monitoring_stations[i]['current_CH4'] / (dtime * local_monitoring_stations[i]['number_of_timesteps'])
-            # local_monitoring_stations[i]['tracked_CH4'].append({'time': dtime * local_monitoring_stations[i]['number_of_timesteps'], 'avg_CH4': avg_CH4})
             avg_CH4 = local_monitoring_stations[i]['current_CH4'] / (dtime * number_of_timesteps)
             local_monitoring_stations[i]['tracked_CH4'].append({'time': dtime * number_of_timesteps, 'avg_CH4': avg_CH4, 'datetime': datetime})
             local_monitoring_stations[i]['current_CH4'] = 0
