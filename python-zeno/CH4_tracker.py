@@ -17,7 +17,7 @@ from scipy.spatial import KDTree
 
 jg = 1 # we do compututations only on domain 1, as in our case our grid only has one domain
 msgrank = 0 # Rank that prints messages
-monitoring_stations = [[26.0, 46.0], [23.0, 47.0]] # first coordinate is longitude, second coordinate is latitude
+monitoring_stations = [[26.0, 46.0, 0], [23.0, 47.0, 0]] # first coordinate is longitude, second coordinate is latitude, third is height
 time_interval = 3600 # in seconds
 
 
@@ -61,6 +61,7 @@ def stations_init():
     for i in range(len(monitoring_stations)):
         station_lon = monitoring_stations[i][0]
         station_lat = monitoring_stations[i][1]
+        station_height = monitoring_stations[i][2]
         dd, ii = tree.query([lonlat2xyz(np.deg2rad(station_lon), np.deg2rad(station_lat))], k=1)
 
         # iii = ii[0]
@@ -74,6 +75,7 @@ def stations_init():
                 'jc_loc': jc_loc, 
                 'jb_loc': jb_loc, 
                 'current_CH4': 0, 
+                'height': station_height, 
                 'tracked_CH4': []
                 })
 
@@ -85,6 +87,7 @@ def tracking_CH4_total():
     global number_of_timesteps
     dtime = comin.descrdata_get_timesteplength(jg)
     datetime = comin.current_get_datetime() # This could maybe be useful for later, example for format: 2019-01-01T00:01:00.000
+    number_of_timesteps += 1 # tracking number of steps, to in the end average over the correct time
 
     for i in range(len(local_monitoring_stations)):
         # Convert all of them to numpy arrays
@@ -93,23 +96,24 @@ def tracking_CH4_total():
         CH4_OMV_np = np.asarray(CH4_OMV)
         CH4_BG_np = np.asarray(CH4_BG)
 
+        height = local_monitoring_stations[i]['height']
+        jc_loc = local_monitoring_stations[i]['jc_loc']
+        jb_loc = local_monitoring_stations[i]['jb_loc']
+
         # This is the main summation of all of the CH4 sources. Maybe some of them are counted twice, will have to look at again, but very simple to take out a source. Also not 100% sure if the indexing is correct
-        local_monitoring_stations[i]['current_CH4'] += CH4_EMIS_np[local_monitoring_stations[i]['jc_loc'],0,local_monitoring_stations[i]['jb_loc'],0,0]
-        local_monitoring_stations[i]['current_CH4'] += CH4_TNO_np[local_monitoring_stations[i]['jc_loc'],0,local_monitoring_stations[i]['jb_loc'],0,0]
-        local_monitoring_stations[i]['current_CH4'] += CH4_OMV_np[local_monitoring_stations[i]['jc_loc'],0,local_monitoring_stations[i]['jb_loc'],0,0]
-        local_monitoring_stations[i]['current_CH4'] += CH4_BG_np[local_monitoring_stations[i]['jc_loc'],0,local_monitoring_stations[i]['jb_loc'],0,0]
-        # tracking number of steps, to in the end average over the correct time
-        if (i == 0):
-            number_of_timesteps += 1
+        local_monitoring_stations[i]['current_CH4'] += CH4_EMIS_np[jc_loc, height, jb_loc, 0, 0]
+        local_monitoring_stations[i]['current_CH4'] += CH4_TNO_np[jc_loc, height, jb_loc, 0, 0]
+        local_monitoring_stations[i]['current_CH4'] += CH4_OMV_np[jc_loc, height, jb_loc, 0, 0]
+        local_monitoring_stations[i]['current_CH4'] += CH4_BG_np[jc_loc, height, jb_loc, 0, 0]
 
-
+    elapsed_time = dtime * number_of_timesteps
     # Now this is where we log the averaged CH4, currently it is done by just storing it in the local monitoring stations variable, will do differently in future
-    if (dtime * number_of_timesteps >= time_interval):
+    if (elapsed_time >= time_interval):
         for i in range(len(local_monitoring_stations)):
             avg_CH4 = local_monitoring_stations[i]['current_CH4'] / (dtime * number_of_timesteps)
-            local_monitoring_stations[i]['tracked_CH4'].append({'time': dtime * number_of_timesteps, 'avg_CH4': avg_CH4, 'datetime': datetime})
+            local_monitoring_stations[i]['tracked_CH4'].append({'time_period': elapsed_time, 'avg_CH4': avg_CH4, 'datetime': datetime})
             local_monitoring_stations[i]['current_CH4'] = 0
-            # print(f"ComIn point_source.py: {local_monitoring_stations[i]['tracked_CH4']}, called by process {comin.parallel_get_host_mpi_rank()}, LOL EY SO TOLL", file=sys.stderr)
+            print(f"ComIn point_source.py: {local_monitoring_stations[i]['tracked_CH4']}, called by process {comin.parallel_get_host_mpi_rank()}, LOL EY SO TOLL", file=sys.stderr)
         
         number_of_timesteps = 0
         
