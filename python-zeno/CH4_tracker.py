@@ -19,11 +19,11 @@ import sys
 import os
 from scipy.spatial import KDTree
 
-first_write_done = False
+first_write_done = False # Help to know if output file already exists
 jg = 1 # we do compututations only on domain 1, as in our case our grid only has one domain
 msgrank = 0 # Rank that prints messages
 monitoring_stations = [[26.0, 46.0, 0], [23.0, 47.0, 0]] # first coordinate is longitude, second coordinate is latitude, third is height
-time_interval = 3600 # in seconds
+time_interval_writeout = 3600 # in seconds
 
 
 def message(message_string, rank):
@@ -38,12 +38,10 @@ def lonlat2xyz(lon, lat):
 @comin.register_callback(comin.EP_SECONDARY_CONSTRUCTOR)
 def data_constructor():
 #     """Constructor: Get pointers to data"""
-    global CH4_EMIS, CH4_BG # , CH4_TNO, CH4_OMV
+    global CH4_EMIS, CH4_BG
     entry_points = [comin.EP_ATM_TIMELOOP_END] # TIMELOOP END is atm randomly selected, as it's just once every iteration, maybe it makes sense to have a different Entry Point
     
     CH4_EMIS = comin.var_get(entry_points, ("CH4_EMIS", jg), comin.COMIN_FLAG_READ)
-    # CH4_TNO = comin.var_get(entry_points, ("CH4_TNO", jg), comin.COMIN_FLAG_READ)
-    # CH4_OMV = comin.var_get(entry_points, ("CH4_OMV", jg), comin.COMIN_FLAG_READ)
     CH4_BG = comin.var_get(entry_points, ("CH4_BG", jg), comin.COMIN_FLAG_READ)
 
     message("data_constructor successful", msgrank)
@@ -69,21 +67,18 @@ def stations_init():
         station_height = monitoring_stations[i][2]
         dd, ii = tree.query([lonlat2xyz(np.deg2rad(station_lon), np.deg2rad(station_lat))], k=1)
 
-        # iii = ii[0]
         if (decomp_domain.ravel()[ii] == 0):
             # point found is inside prognostic area
             # This implicitly assumes that on each other PE, the nearest neighbor is located in the halo zone
             jc_loc, jb_loc = np.unravel_index(ii, clon.shape)
             message(f"Monitoring station {i} found at PE {comin.parallel_get_host_mpi_rank()}, clon={np.rad2deg(clon[jc_loc,jb_loc])}, clat={np.rad2deg(clat[jc_loc,jb_loc])}", comin.parallel_get_host_mpi_rank())
             local_monitoring_stations.append({
-                # 'station_index': i, 
                 'jc_loc': jc_loc, 
                 'jb_loc': jb_loc, 
                 'current_CH4': 0, 
                 'height': station_height,
                 'lon': station_lon,
-                'lat': station_lat,
-                'tracked_CH4': []
+                'lat': station_lat
                 })
 
 
@@ -99,8 +94,6 @@ def tracking_CH4_total():
     for i in range(len(local_monitoring_stations)):
         # Convert all of them to numpy arrays
         CH4_EMIS_np = np.asarray(CH4_EMIS)
-        # CH4_TNO_np = np.asarray(CH4_TNO)
-        # CH4_OMV_np = np.asarray(CH4_OMV)
         CH4_BG_np = np.asarray(CH4_BG)
 
         height = local_monitoring_stations[i]['height']
@@ -108,14 +101,12 @@ def tracking_CH4_total():
         jb_loc = local_monitoring_stations[i]['jb_loc']
 
         # This is the main summation of all of the CH4 sources. Also not 100% sure if the indexing is correct
-        local_monitoring_stations[i]['current_CH4'] += CH4_EMIS_np[jc_loc, height, jb_loc, 0, 0]
-        # local_monitoring_stations[i]['current_CH4'] += CH4_TNO_np[jc_loc, height, jb_loc, 0, 0]
-        # local_monitoring_stations[i]['current_CH4'] += CH4_OMV_np[jc_loc, height, jb_loc, 0, 0]
-        local_monitoring_stations[i]['current_CH4'] += CH4_BG_np[jc_loc, height, jb_loc, 0, 0]
+        local_monitoring_stations[i]['current_CH4'] += CH4_EMIS_np[jc_loc, 0, jb_loc, 0, 0]
+        local_monitoring_stations[i]['current_CH4'] += CH4_BG_np[jc_loc, 0, jb_loc, 0, 0]
 
     elapsed_time = dtime * number_of_timesteps
     # Now this is where we log the averaged CH4, it is done by gathering the local monitoring stations and then storing them in an xarray, also writing them out then into an outputfile
-    if (elapsed_time >= time_interval):
+    if (elapsed_time >= time_interval_writeout):
         local_data = None
         for i in range(len(local_monitoring_stations)):
             if(i==0):

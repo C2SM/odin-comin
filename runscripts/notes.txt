@@ -27,7 +27,7 @@ spack -e ./my-icon add icon
 spack -e ./my-icon develop -p /path/to/icon-source-dir icon@=<version> # (i.e for me it was spack -e ./my-icon develop -p /capstor/scratch/cscs/zhug/icon-nwp icon@=icon-2024.10-dwd-3.0)
 spack -e ./my-icon add py-numpy py-scipy py-xarray py-mpi4py py-netcdf4
 spack -e ./my-icon concretize -f
-# check output, it must contain cray-mpich, py-numpy and py-scipy in the dependencies
+# check output, it must contain cray-mpich and all the manually added libraries in the dependencies
 spack -e ./my-icon install
  
 # find icon installation binary file
@@ -44,8 +44,9 @@ export SPACK_SYSTEM_CONFIG_PATH=/user-environment/config/
 spack build-env icon -- bash
 # it is normal for the bash to look like the old, except you dont see environment anymore. you can use the command exit to get out of the development environment which will return back to bash with spack environment on.
 # next, inside icon-nwp
-cd externals/comin/build && cmake -DCOMIN_ENABLE_EXAMPLES=ON -DCOMIN_ENABLE_PYTHON_ADAPTER=ON .
-cd externals/comin/build && make
+cd externals/comin/build
+cmake -DCOMIN_ENABLE_EXAMPLES=ON -DCOMIN_ENABLE_PYTHON_ADAPTER=ON .
+make
 
 # So, now we have fully compiled icon and the comin plugins. Now, you still need to add the following in your runscript, assuming you already have one and just want to use an existing setup now with comin:
 
@@ -62,12 +63,11 @@ plugin_list(1)%options        = "/capstor/scratch/cscs/zhug/Romania6km/python-ze
 
 /
 
-# I personally still had issues, as icon didn't find my installed numpy and scipy. So I then had to explicitly export the paths to those packages
-# So, step 1 is finding out where the numpy and scipy are located:
-spack location -i py-numpy
-spack location -i py-scipy
-# Export the python modules (add this in jobscript)
-export PYTHONPATH=/path/to/py-numpy/lib/python3.11/site-packages:/path/to/py-scipy/lib/python3.11/site-packages:$PYTHONPATH
+# Then, we need to load the spack plugins vefore running icon, so add in your jobscript
+spack load py-scipy
+spack load py-xarray
+spack load py-mpi4py
+spack load py-netcdf4
 
 
 # In general, as soon as you want to use a new library in your .py file, that isn't installed yet use the following:
@@ -82,14 +82,8 @@ spack -e ./my-icon add <new-library>
 spack -e ./my-icon concretize -f
 spack -e ./my-icon install
 
-# If when trying to run icon can't find the libraries:
-# Find installed package
-spack location -i <library>
-
-# Export the python modules (add this in jobscript)
-export PYTHONPATH=/path/to/<library>/lib/python3.11/site-packages:$PYTHONPATH
-
-
+# If, when trying to run, icon can't find the libraries, add the following line to your jobscript:
+spack load <new-library>
 
 
 ## Running icon with Comin:
@@ -99,5 +93,13 @@ source /capstor/scratch/cscs/zhug/spack/share/spack/setup-env.sh
 uenv start --view=spack prgenv-gnu/24.11:v1
 export SPACK_SYSTEM_CONFIG_PATH=/user-environment/config/
 export FI_CXI_OPTIMIZED_MRS=false
-
 # Now you can sbatch your runscript
+
+# For ease I have created my own bash scripts for running icon. If you want to use these, here is how to: (You will need to go into the bash scripts and change the filepaths to your specific ones)
+# When starting a new terminal:
+cd runscripts
+sh prepare.sh
+# This loads the uenv
+
+# Then, whenever you want to start a new job, using the comin jobscript, run:
+sh start.sh
