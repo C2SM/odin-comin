@@ -25,7 +25,7 @@ spack env create -d my-icon
 spack -e ./my-icon add icon
 # Add additional specs manually in the file: +rte-rrtmgp +art +grib2 +comin
 spack -e ./my-icon develop -p /path/to/icon-source-dir icon@=<version> # (i.e for me it was spack -e ./my-icon develop -p /capstor/scratch/cscs/zhug/icon-nwp icon@=icon-2024.10-dwd-3.0)
-spack -e ./my-icon add py-numpy py-scipy
+spack -e ./my-icon add py-numpy py-scipy py-xarray py-mpi4py py-netcdf4
 spack -e ./my-icon concretize -f
 # check output, it must contain cray-mpich, py-numpy and py-scipy in the dependencies
 spack -e ./my-icon install

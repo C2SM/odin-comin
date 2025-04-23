@@ -478,10 +478,14 @@ EOF
 # cp -p /capstor/scratch/cscs/zhug/spack/opt/spack/linux-sles15-zen2/gcc-13.3.0/icon-icon-2024.10-dwd-3.0-7i2y5rw27gqzolhlv3lcmtfxelcpdysc/bin/icon icon.exe
 
 # new 
-cp -p /capstor/scratch/cscs/zhug/spack/opt/spack/linux-sles15-zen2/gcc-13.3.0/icon-icon-2024.10-dwd-3.0-7ukj6ilasfiml44lcczxezq2w47hzrh2/bin/icon icon.exe
+cp -p  /capstor/scratch/cscs/zhug/spack/opt/spack/linux-sles15-zen2/gcc-13.3.0/icon-icon-2024.10-dwd-3.0-7i2y5rw27gqzolhlv3lcmtfxelcpdysc/bin/icon icon.exe
 
-# Point Python to the NumPy and SciPy install location
-export PYTHONPATH=/capstor/scratch/cscs/zhug/spack/opt/spack/linux-sles15-zen2/gcc-13.3.0/py-numpy-2.1.2-nmtnjfck3ibivapqd5vfvhr3gbzhsifp/lib/python3.11/site-packages:$PYTHONPATH
-export PYTHONPATH=/capstor/scratch/cscs/zhug/spack/opt/spack/linux-sles15-zen2/gcc-13.3.0/py-scipy-1.14.1-hhntn5ky4eif7xabze4n6v2kjrdbgtjh/lib/python3.11/site-packages:$PYTHONPATH
+# Load the needed libraries
+# spack load py-numpy
+spack load py-scipy
+spack load py-xarray
+# spack load py-pandas
+spack load py-mpi4py
+spack load py-netcdf4
 
 srun ./icon.exe
