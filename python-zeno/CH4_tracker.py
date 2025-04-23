@@ -156,7 +156,7 @@ def tracking_CH4_total():
                 },
             )
 
-            ds["avg_CH4"].attrs["units"] = "ppbv"
+            ds["avg_CH4"].attrs["units"] = "none"
             ds["avg_CH4"].attrs["long_name"] = "Average CH4 concentration"
             ds["lon"].attrs["units"] = "degrees_east"
             ds["lat"].attrs["units"] = "degrees_north"
