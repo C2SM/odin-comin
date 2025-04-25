@@ -10,7 +10,7 @@ for i, station_name in enumerate(ds["station"].values):
     fig, ax = plt.subplots()
     ds["avg_CH4"].isel(station=i).plot(ax=ax)
     ax.set_title(f"CH4 Time Series - {station_name}")
-    ax.set_ylabel("CH4 concentration (none)")
+    ax.set_ylabel("CH4 concentration (ppb)")
     ax.set_xlabel("Time")
 
     # Save the figure
