@@ -134,10 +134,10 @@ def find_stations_monitor(lons, lats, heights, are_abg, tree, decomp_domain, clo
             np.array(jb_locs, dtype=np.int32),
             np.array(vertical_indices, dtype=np.int32),
             np.array(weights_all, dtype=np.float64),
-            np.array(lons_local),
-            np.array(lats_local),
-            np.array(heights_local),
-            np.array(are_abg_local))
+            np.array(lons_local, dtype=np.float64),
+            np.array(lats_local, dtype=np.float64),
+            np.array(heights_local, dtype=np.float64),
+            np.array(are_abg_local, dtype=bool))
 
 def find_stations_singlepoint(lons, lats, heights, are_abg, timesteps, tree, decomp_domain, clon, hhl):
     """Find the local monitoring points that should be read out on a single timestep on each PE in the own domain and return all of the relevant data needed for computation"""
@@ -221,11 +221,11 @@ def find_stations_singlepoint(lons, lats, heights, are_abg, timesteps, tree, dec
             np.array(jb_locs, dtype=np.int32),
             np.array(vertical_indices, dtype=np.int32),
             np.array(weights_all, dtype=np.float64),
-            np.array(lons_local),
-            np.array(lats_local),
-            np.array(heights_local),
-            np.array(are_abg_local),
-            np.array(timesteps_local))
+            np.array(lons_local, dtype=np.float64),
+            np.array(lats_local, dtype=np.float64),
+            np.array(heights_local, dtype=np.float64),
+            np.array(are_abg_local, dtype=bool),
+            np.array(timesteps_local, dtype=np.float64))
 
 def write_singlepoints(datetime):
     """Function to writeout the single timepoint data"""
