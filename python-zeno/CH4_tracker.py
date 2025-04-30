@@ -18,22 +18,25 @@ import pandas as pd
 import sys
 from scipy.spatial import KDTree
 import datetime as datumzeit
+import os
 
 first_write_done_monitoring = False # Help to know if output file already exists
-first_write_done_single = False
+# first_write_done_single = False
 singlepoint_done = False
-debug = True
+# debug = True
+NUMBER_OF_NN = 4 # Number of nearest niehgbour cells over which should be interpolated
 N_COMPUTE_PES = 123  # number of compute PEs
 jg = 1 # we do compututations only on domain 1, as in our case our grid only has one domain
 msgrank = 0 # Rank that prints messages
+days_of_flights = [7, 8]
 
-singlepoint_lons = np.array([])
+singlepoint_lons = np.array([]) # predefine the arrays as empty
 singlepoint_lats = np.array([])
 singlepoint_heights = np.array([])
 singlepoint_is_abg = np.array([])
 singlepoint_timestep = np.array([])
 
-monitoring_lons = np.array([26.0, 23.0])
+monitoring_lons = np.array([26.0, 23.0]) # predefine the monitoring stations. This could in future also be done via file inread
 monitoring_lats = np.array([46.0, 47.0])
 monitoring_heights = np.array([0.0, 0.0])
 monitoring_is_abg = np.array([True, True])
@@ -48,35 +51,73 @@ def message(message_string, rank):
         print(f"ComIn point_source.py: {message_string}", file=sys.stderr)
 
 def lonlat2xyz(lon, lat):
+    """Short helper function for calculating xyz coordinates"""
     clat = np.cos(lat) 
     return clat * np.cos(lon), clat * np.sin(lon), np.sin(lat)
 
 def find_stations_monitor(lons, lats, heights, are_abg, tree, decomp_domain, clon, hhl):
+    """Find the local stationary monitoring stations on each PE in the own domain and return all of the relevant data needed for computation"""
     jc_locs = []
     jb_locs = []
     vertical_indices = []
+    weights_all = []
     lons_local = []
     lats_local = []
     heights_local = []
     are_abg_local = []
 
     for lon, lat, height, above_ground in zip(lons, lats, heights, are_abg):
-        dd, ii = tree.query([lonlat2xyz(np.deg2rad(lon), np.deg2rad(lat))], k=1)
+        dd, ii = tree.query([lonlat2xyz(np.deg2rad(lon), np.deg2rad(lat))], k = NUMBER_OF_NN)
 
-        if (decomp_domain.ravel()[ii] == 0):
-            jc_loc, jb_loc = np.unravel_index(ii, clon.shape)
-            local_hhl = hhl[jc_loc, :, jb_loc].squeeze()
-            h_mid = 0.5 * (local_hhl[:-1] + local_hhl[1:])
+        if decomp_domain.ravel()[ii[0][0]] == 0:
+            jc_loc, jb_loc = np.unravel_index(ii[0], clon.shape)
 
-            height_above_sea = height
-            if above_ground:
-                height_above_sea += local_hhl[-1]
+            # create a mask: which neighbors are local
+            local_mask = (decomp_domain.ravel()[ii[0]] == 0)
 
-            vertical_index = int(np.argmin(np.abs(h_mid - height_above_sea)))
+            # filter jc and jb
+            jc_loc = jc_loc[local_mask]
+            jb_loc = jb_loc[local_mask]
+            dd_local = dd[0][local_mask] 
 
-            jc_locs.append(jc_loc)
-            jb_locs.append(jb_loc)
-            vertical_indices.append(vertical_index)
+
+            jc_row = []
+            jb_row = []
+            vertical_row = []
+            weight_row = []
+
+            for jc, jb in zip(jc_loc, jb_loc):
+                local_hhl = hhl[jc, :, jb].squeeze()
+                h_mid = 0.5 * (local_hhl[:-1] + local_hhl[1:])
+
+                height_above_sea = height
+                if above_ground:
+                    height_above_sea += local_hhl[-1]
+
+                vertical_index = int(np.argmin(np.abs(h_mid - height_above_sea)))
+                jc_row.append(jc)
+                jb_row.append(jb)
+                vertical_row.append(vertical_index)
+
+            if np.any(dd_local==0):
+                print('The longitude/latitude coincides identically with an ICON cell, which is an issue for the inverse distance weighting.', file=sys.stderr)
+                print('I will slightly modify this value to avoid errors.', file=sys.stderr)
+                dd_local[dd_local==0] = 1e-12
+            weights = 1.0 / dd_local
+            weights = weights / np.sum(weights)
+
+            weight_row = weights.tolist()
+            # If fewer than NUMBER_OF_NN neighbors, pad with -1
+            while len(jc_row) < NUMBER_OF_NN:
+                jc_row.append(-1)
+                jb_row.append(-1)
+                vertical_row.append(-1)
+                weight_row.append(0.0)
+
+            jc_locs.append(jc_row)
+            jb_locs.append(jb_row)
+            vertical_indices.append(vertical_row)
+            weights_all.append(weight_row)
             lons_local.append(lon)
             lats_local.append(lat)
             heights_local.append(height)
@@ -85,15 +126,18 @@ def find_stations_monitor(lons, lats, heights, are_abg, tree, decomp_domain, clo
     return (np.array(jc_locs, dtype=np.int32),
             np.array(jb_locs, dtype=np.int32),
             np.array(vertical_indices, dtype=np.int32),
+            np.array(weights_all, dtype=np.float64),
             np.array(lons_local),
             np.array(lats_local),
             np.array(heights_local),
             np.array(are_abg_local))
 
 def find_stations_singlepoint(lons, lats, heights, are_abg, timesteps, tree, decomp_domain, clon, hhl):
+    """Find the local monitoring points that should be read out on a single timestep on each PE in the own domain and return all of the relevant data needed for computation"""
     jc_locs = []
     jb_locs = []
     vertical_indices = []
+    weights_all = []
     lons_local = []
     lats_local = []
     heights_local = []
@@ -101,22 +145,56 @@ def find_stations_singlepoint(lons, lats, heights, are_abg, timesteps, tree, dec
     timesteps_local = []
 
     for lon, lat, height, above_ground, timestep in zip(lons, lats, heights, are_abg, timesteps):
-        dd, ii = tree.query([lonlat2xyz(np.deg2rad(lon), np.deg2rad(lat))], k=1)
+        dd, ii = tree.query([lonlat2xyz(np.deg2rad(lon), np.deg2rad(lat))], k = NUMBER_OF_NN)
 
-        if (decomp_domain.ravel()[ii] == 0):
-            jc_loc, jb_loc = np.unravel_index(ii, clon.shape)
-            local_hhl = hhl[jc_loc, :, jb_loc].squeeze()
-            h_mid = 0.5 * (local_hhl[:-1] + local_hhl[1:])
+        if decomp_domain.ravel()[ii[0][0]] == 0:
+            jc_loc, jb_loc = np.unravel_index(ii[0], clon.shape)
 
-            height_above_sea = height
-            if above_ground:
-                height_above_sea += local_hhl[-1]
+            # create a mask: which neighbors are local
+            local_mask = (decomp_domain.ravel()[ii[0]] == 0)
 
-            vertical_index = int(np.argmin(np.abs(h_mid - height_above_sea)))
+            # filter jc and jb
+            jc_loc = jc_loc[local_mask]
+            jb_loc = jb_loc[local_mask]
+            dd_local = dd[0][local_mask] 
 
-            jc_locs.append(jc_loc)
-            jb_locs.append(jb_loc)
-            vertical_indices.append(vertical_index)
+            jc_row = []
+            jb_row = []
+            vertical_row = []
+            weight_row = []
+
+            for jc, jb in zip(jc_loc, jb_loc):
+                local_hhl = hhl[jc, :, jb].squeeze()
+                h_mid = 0.5 * (local_hhl[:-1] + local_hhl[1:])
+
+                height_above_sea = height
+                if above_ground:
+                    height_above_sea += local_hhl[-1]
+
+                vertical_index = int(np.argmin(np.abs(h_mid - height_above_sea)))
+                jc_row.append(jc)
+                jb_row.append(jb)
+                vertical_row.append(vertical_index)
+
+            if np.any(dd_local==0):
+                print('The longitude/latitude coincides identically with an ICON cell, which is an issue for the inverse distance weighting.', file=sys.stderr)
+                print('I will slightly modify this value to avoid errors.', file=sys.stderr)
+                dd_local[dd_local==0] = 1e-12           
+            weights = 1.0 / dd_local
+            weights = weights / np.sum(weights)
+
+            weight_row = weights.tolist()
+            # If fewer than NUMBER_OF_NN neighbors, pad with -1
+            while len(jc_row) < NUMBER_OF_NN:
+                jc_row.append(-1)
+                jb_row.append(-1)
+                vertical_row.append(-1)
+                weight_row.append(0.0)
+
+            jc_locs.append(jc_row)
+            jb_locs.append(jb_row)
+            vertical_indices.append(vertical_row)
+            weights_all.append(weight_row)
             lons_local.append(lon)
             lats_local.append(lat)
             heights_local.append(height)
@@ -126,14 +204,16 @@ def find_stations_singlepoint(lons, lats, heights, are_abg, timesteps, tree, dec
     return (np.array(jc_locs, dtype=np.int32),
             np.array(jb_locs, dtype=np.int32),
             np.array(vertical_indices, dtype=np.int32),
+            np.array(weights_all, dtype=np.float64),
             np.array(lons_local),
             np.array(lats_local),
             np.array(heights_local),
             np.array(are_abg_local),
             np.array(timesteps_local))
 
-def write_singlepoints():
-    global first_write_done_single, done_counter, comm, rank
+def write_singlepoints(datetime):
+    """Function to writeout the single timepoint data"""
+    global done_counter, comm # first_write_done_single
 
     done_data_local = None
     if done_counter > 0:
@@ -167,18 +247,20 @@ def write_singlepoints():
                 final_data[key] = np.concatenate(final_data[key])
 
             df = pd.DataFrame(final_data)
+            
 
             # Write to CSV
-            csv_file = "ch4_flight.csv"
-            df.to_csv(csv_file, mode='a', header=not first_write_done_single, index=False)
+            csv_file = "flight_modeled" + str(pd.to_datetime(datetime).day) + ".csv"
+            
+            file_exists = os.path.isfile(csv_file)
+            df.to_csv(csv_file, mode='a', header=not file_exists, index=False)
 
-            if not first_write_done_single:
-                first_write_done_single = True
-        else:
-            pass
+            # if not first_write_done_single:
+            #     first_write_done_single = True
 
 def write_monitoring_stations(datetime):
-    global first_write_done_monitoring, comm, rank
+    """Function to writeout the stationary monitoring stations"""
+    global first_write_done_monitoring, comm
 
     # Calculate averaged CH4
     avg_CH4_local = current_CH4_monitoring / number_of_timesteps
@@ -252,7 +334,7 @@ def data_constructor():
 
 @comin.register_callback(comin.EP_ATM_INIT_FINALIZE)
 def stations_init():
-    global number_of_timesteps, clon, clat, hhl, xyz, decomp_domain, tree, jc_loc_monitoring, jb_loc_monitoring, vertical_indices_monitoring, current_CH4_monitoring, monitoring_lons, monitoring_lats, monitoring_heights, monitoring_is_abg, comm, rank
+    global number_of_timesteps, clon, clat, hhl, xyz, decomp_domain, tree, jc_loc_monitoring, jb_loc_monitoring, vertical_indices_monitoring, current_CH4_monitoring, monitoring_lons, monitoring_lats, monitoring_heights, monitoring_is_abg, comm, rank, weights_monitoring
     world_comm = MPI.COMM_WORLD
 
     group_world = world_comm.Get_group()
@@ -276,29 +358,32 @@ def stations_init():
     number_of_timesteps = 0
 
     tree = KDTree(xyz)
-    (jc_loc_monitoring, jb_loc_monitoring, vertical_indices_monitoring,
+    (jc_loc_monitoring, jb_loc_monitoring, vertical_indices_monitoring, weights_monitoring, 
  monitoring_lons, monitoring_lats, monitoring_heights, monitoring_is_abg) = find_stations_monitor(
     monitoring_lons, monitoring_lats, monitoring_heights, monitoring_is_abg,
     tree, decomp_domain, clon, hhl
 )
-    current_CH4_monitoring = np.zeros(jc_loc_monitoring.shape, dtype=np.float64)
+    current_CH4_monitoring = np.zeros(monitoring_lons.shape, dtype=np.float64)
 
 @comin.register_callback(comin.EP_ATM_TIMELOOP_START)
 def input_flight_data():
     """reading in csv flight file"""
-    global debug, clon, clat, hhl, xyz, decomp_domain, tree, singlepoint_lons, singlepoint_lats, singlepoint_heights, singlepoint_is_abg, singlepoint_timestep, jc_loc_singlepoint, jb_loc_singlepoint, vertical_indices_singlepoint, CH4_singlepoint, done_lons, done_lats, done_heights, done_times, done_CH4, done_counter, N_flight_points, singlepoint_done, rank, comm
+    global singlepoint_lons, singlepoint_lats, singlepoint_heights, singlepoint_is_abg, singlepoint_timestep, jc_loc_singlepoint, jb_loc_singlepoint, vertical_indices_singlepoint, CH4_singlepoint, done_lons, done_lats, done_heights, done_times, done_CH4, done_counter, N_flight_points, singlepoint_done, weights_singlepoint
 
     datetime = comin.current_get_datetime()
 
     if(pd.to_datetime(datetime).time() == datumzeit.time(0,0)):
-        if debug:
+        # if debug:
+        day = pd.to_datetime(datetime).day
+        if day in days_of_flights:
             singlepoint_lons = None
             singlepoint_lats = None
             singlepoint_heights = None
             singlepoint_is_abg = None
             singlepoint_timestep = None
             if rank == 0:
-                df = pd.read_csv('flight.csv', sep=';')
+                flight_file = 'flight' + str(day) + '.csv'
+                df = pd.read_csv(flight_file, sep=';')
 
                 df.columns = [col.strip() for col in df.columns]
                 df = df.dropna(subset=['Time_EPOCH', 'AGL_m', 'Longitude', 'Latitude'])
@@ -306,10 +391,10 @@ def input_flight_data():
 
 
 
-                target_start = datumzeit.datetime(2019, 1, 1, 0, 1, 0)
-                original_start = df['datetime'].min()
-                delta = original_start - target_start
-                df['datetime'] = df['datetime'] - delta
+                # target_start = datumzeit.datetime(2019, 1, 1, 0, 1, 0)
+                # original_start = df['datetime'].min()
+                # delta = original_start - target_start
+                # df['datetime'] = df['datetime'] - delta
 
                 singlepoint_lons = df['Longitude'].to_numpy()
                 singlepoint_lats = df['Latitude'].to_numpy()
@@ -324,10 +409,10 @@ def input_flight_data():
             singlepoint_timestep = comm.bcast(singlepoint_timestep, root=0)      
 
 
-            (jc_loc_singlepoint, jb_loc_singlepoint, vertical_indices_singlepoint,
+            (jc_loc_singlepoint, jb_loc_singlepoint, vertical_indices_singlepoint, weights_singlepoint, 
                 singlepoint_lons, singlepoint_lats, singlepoint_heights, singlepoint_is_abg, singlepoint_timestep) = find_stations_singlepoint(singlepoint_lons, singlepoint_lats, singlepoint_heights, singlepoint_is_abg, singlepoint_timestep, tree, decomp_domain, clon, hhl)
-        CH4_singlepoint = np.empty(jc_loc_singlepoint.shape)
         N_flight_points = singlepoint_lons.shape[0]
+        CH4_singlepoint = np.empty(N_flight_points)
         done_lons = np.empty(N_flight_points, dtype=np.float64)
         done_lats = np.empty(N_flight_points, dtype=np.float64)
         done_heights = np.empty(N_flight_points, dtype=np.float64)
@@ -336,13 +421,13 @@ def input_flight_data():
 
         done_counter = 0 
 
-        debug = False
+        # debug = False
         singlepoint_done = False
 
 @comin.register_callback(comin.EP_ATM_TIMELOOP_END) # TIMELOOP END is atm randomly selected, as it's just once every iteration, maybe it makes sense to have a different Entry Point
 def tracking_CH4_total():
     """tracking of CH4 Emissions"""
-    global number_of_timesteps, jc_loc_monitoring, jb_loc_monitoring, vertical_indices_monitoring, current_CH4_monitoring, jc_loc_singlepoint, jb_loc_singlepoint, vertical_indices_singlepoint, CH4_singlepoint, singlepoint_timestep, singlepoint_lons, singlepoint_lats, singlepoint_heights, done_lons, done_lats, done_heights, done_times, done_CH4, done_counter, N_flight_points, singlepoint_done
+    global number_of_timesteps, current_CH4_monitoring, jc_loc_singlepoint, jb_loc_singlepoint, vertical_indices_singlepoint, CH4_singlepoint, singlepoint_timestep, singlepoint_lons, singlepoint_lats, singlepoint_heights, done_lons, done_lats, done_heights, done_times, done_CH4, done_counter, N_flight_points, singlepoint_done, weights_singlepoint
     dtime = comin.descrdata_get_timesteplength(jg)
     datetime = comin.current_get_datetime() # This could maybe be useful for later, example for format: 2019-01-01T00:01:00.000
     number_of_timesteps += 1 # tracking number of steps, to in the end average over the correct time
@@ -350,20 +435,32 @@ def tracking_CH4_total():
     # Convert all of them to numpy arrays
     CH4_EMIS_np = np.asarray(CH4_EMIS)
     CH4_BG_np = np.asarray(CH4_BG)
-    
-    current_CH4_monitoring += (
+    # Fetch CH4 values
+    CH4_monitoring_all = (
         CH4_EMIS_np[jc_loc_monitoring, vertical_indices_monitoring, jb_loc_monitoring, 0, 0] * 1e9 +
         CH4_BG_np[jc_loc_monitoring, vertical_indices_monitoring, jb_loc_monitoring, 0, 0]
-    )
+    )  
+    if weights_monitoring.size > 0 and CH4_monitoring_all.size > 0:
+        current_CH4_monitoring += np.sum(weights_monitoring * CH4_monitoring_all, axis=1)
+
     model_time_np = np.datetime64(datetime)
 
     if not singlepoint_done and singlepoint_timestep.size > 0:
         ready_mask = singlepoint_timestep <= model_time_np
         if np.any(ready_mask):
-            CH4_ready = np.array([
-                CH4_EMIS_np[jc, vi, jb, 0, 0] * 1e9 + CH4_BG_np[jc, vi, jb, 0, 0]
-                for jc, vi, jb in zip(jc_loc_singlepoint[ready_mask], vertical_indices_singlepoint[ready_mask], jb_loc_singlepoint[ready_mask])
-            ]).ravel()
+            # Filter arrays for ready stations
+            jc_ready = jc_loc_singlepoint[ready_mask]
+            jb_ready = jb_loc_singlepoint[ready_mask]
+            vi_ready = vertical_indices_singlepoint[ready_mask]
+            weights_ready = weights_singlepoint[ready_mask]
+
+            # Fetch CH4 values
+            CH4_ready_all = (
+                CH4_EMIS_np[jc_ready, vi_ready, jb_ready, 0, 0] * 1e9 +
+                CH4_BG_np[jc_ready, vi_ready, jb_ready, 0, 0]
+            )
+
+            CH4_ready = np.sum(weights_ready * CH4_ready_all, axis=1)
 
             num_ready = np.sum(ready_mask)
 
@@ -383,6 +480,7 @@ def tracking_CH4_total():
             jc_loc_singlepoint = jc_loc_singlepoint[keep_mask]
             jb_loc_singlepoint = jb_loc_singlepoint[keep_mask]
             vertical_indices_singlepoint = vertical_indices_singlepoint[keep_mask]
+            weights_singlepoint = weights_singlepoint[keep_mask]
 
         if singlepoint_timestep.size == 0:
             singlepoint_done = True 
@@ -392,7 +490,7 @@ def tracking_CH4_total():
     # Now this is where we log the data we collected
     if (elapsed_time >= time_interval_writeout):
         write_monitoring_stations(datetime)
-        write_singlepoints()
+        write_singlepoints(datetime)
 
         # Reset data
         number_of_timesteps = 0
