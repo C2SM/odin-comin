@@ -479,6 +479,7 @@ EOF
 # cp -p /capstor/scratch/cscs/zhug/spack/opt/spack/linux-sles15-zen2/gcc-13.3.0/icon-icon-2024.10-dwd-3.0-7i2y5rw27gqzolhlv3lcmtfxelcpdysc/bin/icon icon.exe
 
 cp /capstor/scratch/cscs/zhug/Romania6km/runscripts/flight*.csv /capstor/scratch/cscs/zhug/Romania6km/simulation_outer_domain/
+cp /capstor/scratch/cscs/zhug/Romania6km/input/TROPOMI_SRON_20190101_20191231.nc /capstor/scratch/cscs/zhug/Romania6km/simulation_outer_domain/
 # new 
 cp -p  /capstor/scratch/cscs/zhug/spack/opt/spack/linux-sles15-zen2/gcc-13.3.0/icon-icon-2024.10-dwd-3.0-7i2y5rw27gqzolhlv3lcmtfxelcpdysc/bin/icon icon.exe
 

@@ -225,7 +225,7 @@ def find_stations_singlepoint(lons, lats, heights, are_abg, timesteps, tree, dec
             np.array(lats_local, dtype=np.float64),
             np.array(heights_local, dtype=np.float64),
             np.array(are_abg_local, dtype=bool),
-            np.array(timesteps_local, dtype=np.float64))
+            np.array(timesteps_local))
 
 def write_singlepoints(datetime):
     """Function to writeout the single timepoint data"""
