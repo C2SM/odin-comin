@@ -27,7 +27,8 @@ def load_modeled_data(file_path):
     df['CH4_ppb'] = df['CH4'] * (Mda / MCH4)
     # Densify to 1-second intervals and interpolate linearly
     df = df[['Time', 'CH4_ppb']].dropna()
-    df = df.set_index('Time').resample('1s').interpolate().reset_index()
+    df = df.sort_values(by='Time').reset_index(drop=True)
+    # df = df.set_index('Time').resample('50ms').interpolate().reset_index()
 
     return df
 

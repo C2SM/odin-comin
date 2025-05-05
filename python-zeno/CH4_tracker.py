@@ -17,15 +17,19 @@ from mpi4py import MPI
 import pandas as pd
 import sys
 from scipy.spatial import KDTree
-import datetime as datumzeit
+import datetime as datetimelib
 import os
 
 ## Constants:
-NUMBER_OF_NN = 4 # Number of nearest niehgbour cells over which should be interpolated
+NUMBER_OF_NN = 4 # Number of nearest neighbour cells over which should be interpolated
 N_COMPUTE_PES = 123  # number of compute PEs
 jg = 1 # we do compututations only on domain 1, as in our case our grid only has one domain
 msgrank = 0 # Rank that prints messages
-days_of_flights = [7, 8]
+# days_of_flights = [7, 8]
+days_of_flights = [[2019, 10, 7], [2019, 10, 8]] # Up until now manually put in the dates of the flights
+days_of_flights_datetime = []
+for entry in days_of_flights:
+    days_of_flights_datetime.append(datetimelib.date(entry[0], entry[1], entry[2]))
 time_interval_writeout = 900 # variable saying how often you want to writeout the results, in seconds
 
 ## Defining variables:
@@ -59,7 +63,9 @@ def find_stations_monitor(lons, lats, heights, are_abg, tree, decomp_domain, clo
     # Define all lists as empty
     jc_locs = [] 
     jb_locs = []
-    vertical_indices = []
+    vertical_indices1 = []
+    vertical_indices2 = []
+    weights_vertical_all = []
     weights_all = []
     lons_local = []
     lats_local = []
@@ -80,8 +86,10 @@ def find_stations_monitor(lons, lats, heights, are_abg, tree, decomp_domain, clo
 
             jc_row = []
             jb_row = []
-            vertical_row = []
+            vertical_row1 = []
+            vertical_row2 = []
             weight_row = []
+            weight_row_vertical  = []
 
             # Now, we want to compute the correct vertical index for each of the NUMBER_OF_NN cells. 
             for jc, jb in zip(jc_loc, jb_loc):
@@ -94,10 +102,27 @@ def find_stations_monitor(lons, lats, heights, are_abg, tree, decomp_domain, clo
                 if above_ground:
                     height_above_sea += local_hhl[-1]
 
-                vertical_index = int(np.argmin(np.abs(h_mid - height_above_sea))) # We take cell closest to the actual height
+                closest_index = int(np.argmin(np.abs(h_mid - height_above_sea))) # This is the closest index
+                
+                actual_height_closest = h_mid[closest_index]
+                second_index = closest_index
+                # Second index is for height interpolation. depending on where the closest height is, compute the second index, also taking into consideration boundary conditions
+                if actual_height_closest >= height_above_sea and actual_height_closest != h_mid[-1]:
+                    second_index += 1
+                elif actual_height_closest < height_above_sea and actual_height_closest != h_mid[0]:
+                    second_index -= 1
+                second_height = h_mid[second_index]
+                vertical_weight = 0
+                if second_height - actual_height_closest != 0:
+                    vertical_weight = (height_above_sea - actual_height_closest) / (second_height - actual_height_closest)
+
+
                 jc_row.append(jc)
                 jb_row.append(jb)
-                vertical_row.append(vertical_index)
+                vertical_row1.append(closest_index)
+                vertical_row2.append(second_index)
+                weight_row_vertical.append(vertical_weight)
+                
 
             # As we want to take the inverse of the distances as weights we have big issues if the distance is exactly 0. Thats why we just set it to a very small value
             # It should only happen very rarely, but it could happen if we are really unlucky
@@ -116,35 +141,43 @@ def find_stations_monitor(lons, lats, heights, are_abg, tree, decomp_domain, clo
             while len(jc_row) < NUMBER_OF_NN:
                 jc_row.append(-1)
                 jb_row.append(-1)
-                vertical_row.append(-1)
+                vertical_row1.append(-1)
+                vertical_row2.append(-1)
+                weight_row_vertical.append(0.0)
                 weight_row.append(0.0)
 
             # Append all data, for the cells that were found in this PE's domain
             jc_locs.append(jc_row)
             jb_locs.append(jb_row)
-            vertical_indices.append(vertical_row)
             weights_all.append(weight_row)
             lons_local.append(lon)
             lats_local.append(lat)
             heights_local.append(height)
             are_abg_local.append(above_ground)
+            vertical_indices1.append(vertical_row1)
+            vertical_indices2.append(vertical_row2)
+            weights_vertical_all.append(weight_row_vertical)
 
     # Return all data as numpy arrays
-    return (np.array(jc_locs, dtype=np.int32),
-            np.array(jb_locs, dtype=np.int32),
-            np.array(vertical_indices, dtype=np.int32),
-            np.array(weights_all, dtype=np.float64),
-            np.array(lons_local, dtype=np.float64),
-            np.array(lats_local, dtype=np.float64),
-            np.array(heights_local, dtype=np.float64),
-            np.array(are_abg_local, dtype=bool))
+    return (np.array(jc_locs, dtype = np.int32),
+            np.array(jb_locs, dtype = np.int32),
+            np.array(vertical_indices1, dtype = np.int32),
+            np.array(vertical_indices2, dtype = np.int32),
+            np.array(weights_vertical_all, dtype = np.float64),
+            np.array(weights_all, dtype = np.float64),
+            np.array(lons_local, dtype = np.float64),
+            np.array(lats_local, dtype = np.float64),
+            np.array(heights_local, dtype = np.float64),
+            np.array(are_abg_local, dtype = bool))
 
 def find_stations_singlepoint(lons, lats, heights, are_abg, timesteps, tree, decomp_domain, clon, hhl):
     """Find the local monitoring points that should be read out on a single timestep on each PE in the own domain and return all of the relevant data needed for computation"""
     # Define all lists as empty
     jc_locs = []
     jb_locs = []
-    vertical_indices = []
+    vertical_indices1 = []
+    vertical_indices2 = []
+    weights_vertical_all = []
     weights_all = []
     lons_local = []
     lats_local = []
@@ -166,8 +199,10 @@ def find_stations_singlepoint(lons, lats, heights, are_abg, timesteps, tree, dec
 
             jc_row = []
             jb_row = []
-            vertical_row = []
+            vertical_row1 = []
+            vertical_row2 = []
             weight_row = []
+            weight_row_vertical = []
 
             # Now, we want to compute the correct vertical index for each of the NUMBER_OF_NN cells. 
             for jc, jb in zip(jc_loc, jb_loc):
@@ -180,10 +215,24 @@ def find_stations_singlepoint(lons, lats, heights, are_abg, timesteps, tree, dec
                 if above_ground:
                     height_above_sea += local_hhl[-1]
 
-                vertical_index = int(np.argmin(np.abs(h_mid - height_above_sea))) # We take cell closest to the actual height
+                closest_index = int(np.argmin(np.abs(h_mid - height_above_sea))) # We take cell closest to the actual height
+                
+                actual_height_closest = h_mid[closest_index]
+                second_index = closest_index
+                if actual_height_closest >= height_above_sea and actual_height_closest != h_mid[-1]:
+                    second_index += 1
+                elif actual_height_closest < height_above_sea and actual_height_closest != h_mid[0]:
+                    second_index -= 1
+                second_height = h_mid[second_index]
+                vertical_weight = 0
+                if second_height - actual_height_closest != 0:
+                    vertical_weight = (height_above_sea - actual_height_closest) / (second_height - actual_height_closest)
+
                 jc_row.append(jc)
                 jb_row.append(jb)
-                vertical_row.append(vertical_index)
+                vertical_row1.append(closest_index)
+                vertical_row2.append(second_index)
+                weight_row_vertical.append(vertical_weight)
 
             # As we want to take the inverse of the distances as weights we have big issues if the distance is exactly 0. Thats why we just set it to a very small value
             # It should only happen very rarely, but it could happen if we are really unlucky
@@ -202,29 +251,35 @@ def find_stations_singlepoint(lons, lats, heights, are_abg, timesteps, tree, dec
             while len(jc_row) < NUMBER_OF_NN:
                 jc_row.append(-1)
                 jb_row.append(-1)
-                vertical_row.append(-1)
+                vertical_row1.append(-1)
+                vertical_row2.append(-1)
+                weight_row_vertical.append(0.0)
                 weight_row.append(0.0)
 
             # Append all data, for the cells that were found in this PE's domain
             jc_locs.append(jc_row)
             jb_locs.append(jb_row)
-            vertical_indices.append(vertical_row)
             weights_all.append(weight_row)
             lons_local.append(lon)
             lats_local.append(lat)
             heights_local.append(height)
             are_abg_local.append(above_ground)
             timesteps_local.append(timestep)
+            vertical_indices1.append(vertical_row1)
+            vertical_indices2.append(vertical_row2)
+            weights_vertical_all.append(weight_row_vertical)
 
     # Return all data as numpy arrays
-    return (np.array(jc_locs, dtype=np.int32),
-            np.array(jb_locs, dtype=np.int32),
-            np.array(vertical_indices, dtype=np.int32),
-            np.array(weights_all, dtype=np.float64),
-            np.array(lons_local, dtype=np.float64),
-            np.array(lats_local, dtype=np.float64),
-            np.array(heights_local, dtype=np.float64),
-            np.array(are_abg_local, dtype=bool),
+    return (np.array(jc_locs, dtype = np.int32),
+            np.array(jb_locs, dtype = np.int32),
+            np.array(vertical_indices1, dtype = np.int32),
+            np.array(vertical_indices2, dtype = np.int32),
+            np.array(weights_vertical_all, dtype = np.float64),
+            np.array(weights_all, dtype = np.float64),
+            np.array(lons_local, dtype = np.float64),
+            np.array(lats_local, dtype = np.float64),
+            np.array(heights_local, dtype = np.float64),
+            np.array(are_abg_local, dtype = bool),
             np.array(timesteps_local))
 
 def write_singlepoints(datetime):
@@ -264,7 +319,9 @@ def write_singlepoints(datetime):
         if any(len(lst) > 0 for lst in final_data.values()):
             for key in final_data:
                 final_data[key] = np.concatenate(final_data[key])
-
+            
+            # (Convert datetime64 to Unix timestamp in seconds)
+            # final_data["timepoint"] = final_data["timepoint"].astype('int64') // int(1e9)
             df = pd.DataFrame(final_data)
             
             # Csv filename, will maybe change later, when we know how the flight data csv's are named
@@ -364,7 +421,7 @@ def data_constructor():
 def stations_init():
     global number_of_timesteps, clon, clat, hhl, xyz, decomp_domain, tree # variables with domain info, and general information
     # All of the monitoring variables
-    global jc_loc_monitoring, jb_loc_monitoring, vertical_indices_monitoring, current_CH4_monitoring
+    global jc_loc_monitoring, jb_loc_monitoring, vertical_indices_monitoring1, vertical_indices_monitoring2, vertical_weight_monitoring, current_CH4_monitoring
     global monitoring_lons, monitoring_lats, monitoring_heights, monitoring_is_abg, weights_monitoring
     # MPI variables
     global comm, rank
@@ -395,7 +452,7 @@ def stations_init():
     tree = KDTree(xyz) # Create the KDTree, composed of the xyz data
 
     # Find all of the monitoring stations in this local PE's domain and save all relevant data
-    (jc_loc_monitoring, jb_loc_monitoring, vertical_indices_monitoring, weights_monitoring, 
+    (jc_loc_monitoring, jb_loc_monitoring, vertical_indices_monitoring1, vertical_indices_monitoring2, vertical_weight_monitoring,  weights_monitoring, 
         monitoring_lons, monitoring_lats, monitoring_heights, monitoring_is_abg) = find_stations_monitor(
         monitoring_lons, monitoring_lats, monitoring_heights, monitoring_is_abg, tree, decomp_domain, clon, hhl)
 
@@ -406,7 +463,7 @@ def input_flight_data():
     """reading in csv flight file"""
     # All of the singlepoints variables
     global singlepoint_lons, singlepoint_lats, singlepoint_heights, singlepoint_is_abg
-    global singlepoint_timestep, jc_loc_singlepoint, jb_loc_singlepoint, vertical_indices_singlepoint, CH4_singlepoint, weights_singlepoint
+    global singlepoint_timestep, jc_loc_singlepoint, jb_loc_singlepoint, vertical_indices_singlepoint1, vertical_indices_singlepoint2, vertical_weight_singlepoint, CH4_singlepoint, weights_singlepoint
     # Variables for saving all of the already done singlepoints
     global done_lons, done_lats, done_heights, done_times, done_CH4, done_counter
     # helping variable to know how many points we have
@@ -416,10 +473,11 @@ def input_flight_data():
     datetime = comin.current_get_datetime()
 
     # Currently we read in at midnight for the following night
-    if(pd.to_datetime(datetime).time() == datumzeit.time(0,0)):
+    if(pd.to_datetime(datetime).time() == datetimelib.time(0,0)):
         day = pd.to_datetime(datetime).day # get the current day for the name of the filepath
+        current_date = pd.to_datetime(datetime).date()
         # Currently there is a manual list of days with flights. Will need to change later, but need to know how the naming structure of the flight data works
-        if day in days_of_flights:
+        if current_date in days_of_flights_datetime:
             # Predefine all variables
             singlepoint_lons = None
             singlepoint_lats = None
@@ -440,7 +498,7 @@ def input_flight_data():
 
 
                 # This is a small codeblock to manipulate the date of the flight for debugging purposes, if you don't have a flight with the correct date but want to test the functionality
-                # target_start = datumzeit.datetime(2019, 1, 1, 0, 1, 0) # Just enter the date and time you want the flight to start
+                # target_start = datetimelib.datetime(2019, 1, 1, 0, 1, 0) # Just enter the date and time you want the flight to start
                 # original_start = df['datetime'].min()
                 # delta = original_start - target_start
                 # df['datetime'] = df['datetime'] - delta
@@ -460,7 +518,7 @@ def input_flight_data():
             singlepoint_timestep = comm.bcast(singlepoint_timestep, root=0)      
 
             # On each process find the local points in the PE's domain. Get all needed data
-            (jc_loc_singlepoint, jb_loc_singlepoint, vertical_indices_singlepoint, weights_singlepoint, 
+            (jc_loc_singlepoint, jb_loc_singlepoint, vertical_indices_singlepoint1, vertical_indices_singlepoint2, vertical_weight_singlepoint, weights_singlepoint, 
                 singlepoint_lons, singlepoint_lats, singlepoint_heights, singlepoint_is_abg, singlepoint_timestep) = find_stations_singlepoint(
                     singlepoint_lons, singlepoint_lats, singlepoint_heights, singlepoint_is_abg, singlepoint_timestep, tree, decomp_domain, clon, hhl)
         
@@ -471,7 +529,7 @@ def input_flight_data():
         done_lons = np.empty(N_flight_points, dtype=np.float64)
         done_lats = np.empty(N_flight_points, dtype=np.float64)
         done_heights = np.empty(N_flight_points, dtype=np.float64)
-        done_times = np.empty(N_flight_points, dtype="datetime64[ns]")
+        done_times = np.empty(N_flight_points)
         done_CH4 = np.empty(N_flight_points, dtype=np.float64)
 
         done_counter = 0 # counter of how many of the N_flight_points are already done (This day)
@@ -484,8 +542,8 @@ def tracking_CH4_total():
     # stationary monitoring
     global current_CH4_monitoring
     # singlepoint monitoring
-    global jc_loc_singlepoint, jb_loc_singlepoint, vertical_indices_singlepoint, CH4_singlepoint, singlepoint_timestep, singlepoint_lons, singlepoint_lats, singlepoint_heights
-    global done_lons, done_lats, done_heights, done_times, done_CH4, done_counter, weights_singlepoint
+    global jc_loc_singlepoint, jb_loc_singlepoint, vertical_indices_singlepoint1, vertical_indices_singlepoint2, CH4_singlepoint, singlepoint_timestep, singlepoint_lons, singlepoint_lats, singlepoint_heights
+    global done_lons, done_lats, done_heights, done_times, done_CH4, done_counter, weights_singlepoint, vertical_weight_singlepoint
 
     dtime = comin.descrdata_get_timesteplength(jg) # size of every timestep 
     datetime = comin.current_get_datetime() # get datetime info. example for format: 2019-01-01T00:01:00.000
@@ -498,10 +556,15 @@ def tracking_CH4_total():
     ## First we do the stationary monitoring
     # Fetch CH4 values in the correct indices, this fetches per monitoring station NUMBER_OF_NN points
     # Also, we want the CH4 Emissions in ppb. And the EMIS is not yet in ppb but just in parts per part. So we multiply by 1e9
-    CH4_monitoring_all = (
-        CH4_EMIS_np[jc_loc_monitoring, vertical_indices_monitoring, jb_loc_monitoring, 0, 0] * 1e9 +
-        CH4_BG_np[jc_loc_monitoring, vertical_indices_monitoring, jb_loc_monitoring, 0, 0]
+    CH4_monitoring_all1 = (
+        CH4_EMIS_np[jc_loc_monitoring, vertical_indices_monitoring1, jb_loc_monitoring, 0, 0] * 1e9 +
+        CH4_BG_np[jc_loc_monitoring, vertical_indices_monitoring1, jb_loc_monitoring, 0, 0]
     )
+    CH4_monitoring_all2 = (
+        CH4_EMIS_np[jc_loc_monitoring, vertical_indices_monitoring2, jb_loc_monitoring, 0, 0] * 1e9 +
+        CH4_BG_np[jc_loc_monitoring, vertical_indices_monitoring2, jb_loc_monitoring, 0, 0]
+    )
+    CH4_monitoring_all = CH4_monitoring_all1 + vertical_weight_monitoring * (CH4_monitoring_all2 - CH4_monitoring_all1)
     # If we have any data we add the current contribution while also multiplying by the weights
     if weights_monitoring.size > 0 and CH4_monitoring_all.size > 0:
         current_CH4_monitoring += np.sum(weights_monitoring * CH4_monitoring_all, axis=1)
@@ -520,15 +583,23 @@ def tracking_CH4_total():
             # Filter arrays for ready stations
             jc_ready = jc_loc_singlepoint[ready_mask]
             jb_ready = jb_loc_singlepoint[ready_mask]
-            vi_ready = vertical_indices_singlepoint[ready_mask]
+            vi_ready1 = vertical_indices_singlepoint1[ready_mask]
+            vi_ready2 = vertical_indices_singlepoint2[ready_mask]
+            weights_vertical_ready = vertical_weight_singlepoint[ready_mask]
             weights_ready = weights_singlepoint[ready_mask]
 
             # Fetch CH4 values in the correct indices, this fetches per station NUMBER_OF_NN points
             # Also, we want the CH4 Emissions in ppb. And the EMIS is not yet in ppb but just in parts per part. So we multiply by 1e9
-            CH4_ready_all = (
-                CH4_EMIS_np[jc_ready, vi_ready, jb_ready, 0, 0] * 1e9 +
-                CH4_BG_np[jc_ready, vi_ready, jb_ready, 0, 0]
+            CH4_ready_all1 = (
+                CH4_EMIS_np[jc_ready, vi_ready1, jb_ready, 0, 0] * 1e9 +
+                CH4_BG_np[jc_ready, vi_ready1, jb_ready, 0, 0]
             )
+            CH4_ready_all2 = (
+                CH4_EMIS_np[jc_ready, vi_ready2, jb_ready, 0, 0] * 1e9 +
+                CH4_BG_np[jc_ready, vi_ready2, jb_ready, 0, 0]
+            )
+            CH4_ready_all = CH4_ready_all1 + weights_vertical_ready * (CH4_ready_all2 - CH4_ready_all1)
+
 
             # Sum up and correctly interpolate via weights
             CH4_ready = np.sum(weights_ready * CH4_ready_all, axis=1)
@@ -553,7 +624,9 @@ def tracking_CH4_total():
             singlepoint_timestep = singlepoint_timestep[keep_mask]
             jc_loc_singlepoint = jc_loc_singlepoint[keep_mask]
             jb_loc_singlepoint = jb_loc_singlepoint[keep_mask]
-            vertical_indices_singlepoint = vertical_indices_singlepoint[keep_mask]
+            vertical_indices_singlepoint1 = vertical_indices_singlepoint1[keep_mask]
+            vertical_indices_singlepoint2 = vertical_indices_singlepoint2[keep_mask]
+            vertical_weight_singlepoint = vertical_weight_singlepoint[keep_mask]
             weights_singlepoint = weights_singlepoint[keep_mask]
 
     
