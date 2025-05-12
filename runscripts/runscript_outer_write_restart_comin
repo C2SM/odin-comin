@@ -27,7 +27,7 @@ export LD_LIBRARY_PATH=/opt/cray/libfabric/1.15.2.0/lib64/:$LD_LIBRARY_PATH
 
 
 # date=2019010100
-date=2019100700
+date=2019010100
 
 #basic folders
 WORKDIR=${SCRATCH}/Romania6km
@@ -104,7 +104,7 @@ cat > icon_master.namelist << EOF
 ! time_nml: specification of date and time------------------------------------
 &time_nml
  ! dt_restart                  =      604800
- ini_datetime_string         =      "2019-10-07T00:00:00Z"        ! initial date and time of the simulation
+ ini_datetime_string         =      "2019-01-01T00:00:00Z"        ! initial date and time of the simulation
  end_datetime_string         =      "2020-01-01T00:00:00Z"        ! end date and time of the simulation
 /
 EOF
@@ -480,6 +480,9 @@ EOF
 
 cp /capstor/scratch/cscs/zhug/Romania6km/runscripts/flight*.csv /capstor/scratch/cscs/zhug/Romania6km/simulation_outer_domain/
 cp /capstor/scratch/cscs/zhug/Romania6km/input/TROPOMI_SRON_20190101_20191231.nc /capstor/scratch/cscs/zhug/Romania6km/simulation_outer_domain/
+# mkdir /capstor/scratch/cscs/zhug/Romania6km/simulation_outer_domain/CAMS/
+# cp -r /capstor/scratch/cscs/zhug/Romania6km/input/CAMS/LBC/cams73*.nc /capstor/scratch/cscs/zhug/Romania6km/simulation_outer_domain/CAMS/
+cp /capstor/scratch/cscs/zhug/Romania6km/input/CAMS/cams73_v22r2_ch4_conc_surface_inst_201910.nc /capstor/scratch/cscs/zhug/Romania6km/simulation_outer_domain/
 # new 
 cp -p  /capstor/scratch/cscs/zhug/spack/opt/spack/linux-sles15-zen2/gcc-13.3.0/icon-icon-2024.10-dwd-3.0-7i2y5rw27gqzolhlv3lcmtfxelcpdysc/bin/icon icon.exe
 
