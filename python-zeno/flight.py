@@ -196,6 +196,7 @@ def write_singlepoints(datetime, comm, done_flight_data):
 
 
 def read_in_flight_data(datetime, comm, tree, decomp_domain, clon, hhl, number_of_NN):
+    """Function to read in flight data and process the data to be ready for data tracking"""
     dt_str = pd.to_datetime(datetime).strftime("%Y%m%d")
     # Currently there is a manual list of days with flights. Will need to change later, but need to know how the naming structure of the flight data works
     # Predefine all variables
@@ -255,7 +256,7 @@ def read_in_flight_data(datetime, comm, tree, decomp_domain, clon, hhl, number_o
 
 
     keys_to_do = ['lon', 'lat', 'height', 'timestep', 'jc_loc', 'jb_loc', 'vertical_index1', 'vertical_index2', 'vertical_weight', 'horizontal_weight']
-    values_to_do = [singlepoint_lons, singlepoint_lats, singlepoint_heights, jc_loc_singlepoint, jb_loc_singlepoint, vertical_indices_singlepoint1, vertical_indices_singlepoint2, vertical_weight_singlepoint, weights_singlepoint]
+    values_to_do = [singlepoint_lons, singlepoint_lats, singlepoint_heights, singlepoint_timestep, jc_loc_singlepoint, jb_loc_singlepoint, vertical_indices_singlepoint1, vertical_indices_singlepoint2, vertical_weight_singlepoint, weights_singlepoint]
     local_data_to_do = {keys_to_do[i]:values_to_do[i] for i in range(len(keys_to_do))}
 
     keys_done = ['lon', 'lat', 'height', 'timestep', 'CH4', 'counter']
@@ -265,9 +266,11 @@ def read_in_flight_data(datetime, comm, tree, decomp_domain, clon, hhl, number_o
     return local_data_to_do, local_data_done
 
 def initialize_empty():
+     """Helper function to just initialize empty"""
      return {'timestep': np.array([])}, {'counter': 0}
 
 def tracking_CH4_flight(datetime, CH4_EMIS_np, CH4_BG_np, data_to_do, data_done):
+     """The actual tracking of the CH4"""
      if data_to_do['timestep'].size > 0: # Checks if there is still work to do this day
         
         model_time_np = np.datetime64(datetime)

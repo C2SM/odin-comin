@@ -24,7 +24,7 @@ def lonlat2xyz(lon, lat):
     clat = np.cos(lat) 
     return clat * np.cos(lon), clat * np.sin(lon), np.sin(lat)
 
-def find_stations_monitor(lons, lats, heights, are_abg, tree, decomp_domain, clon, hhl, number_of_NN):
+def find_stations_monitor(lons, lats, heights, are_abg, tree, decomp_domain, clon, hhl, number_of_NN, ids):
     """Find the local stationary monitoring stations on each PE in the own domain and return all of the relevant data needed for computation"""
 
     # Define all lists as empty
@@ -38,9 +38,10 @@ def find_stations_monitor(lons, lats, heights, are_abg, tree, decomp_domain, clo
     lats_local = []
     heights_local = []
     are_abg_local = []
+    ids_local = []
 
     # Loop through every station
-    for lon, lat, height, above_ground in zip(lons, lats, heights, are_abg):
+    for lon, lat, height, above_ground, id in zip(lons, lats, heights, are_abg, ids):
 
         # Query the tree for the NUMBER_OF_NN nearest cells
         dd, ii = tree.query([lonlat2xyz(np.deg2rad(lon), np.deg2rad(lat))], k = number_of_NN)
@@ -124,6 +125,8 @@ def find_stations_monitor(lons, lats, heights, are_abg, tree, decomp_domain, clo
             vertical_indices1.append(vertical_row1)
             vertical_indices2.append(vertical_row2)
             weights_vertical_all.append(weight_row_vertical)
+            ids_local.append(id)
+
 
     # Return all data as numpy arrays
     return (np.array(jc_locs, dtype = np.int32),
@@ -135,7 +138,8 @@ def find_stations_monitor(lons, lats, heights, are_abg, tree, decomp_domain, clo
             np.array(lons_local, dtype = np.float64),
             np.array(lats_local, dtype = np.float64),
             np.array(heights_local, dtype = np.float64),
-            np.array(are_abg_local, dtype = bool))
+            np.array(are_abg_local, dtype = bool), 
+            np.array(ids_local, dtype = str))
 
 
 def write_monitoring_stations(datetime, comm, data_monitoring, first_write_done_monitoring):
@@ -150,6 +154,7 @@ def write_monitoring_stations(datetime, comm, data_monitoring, first_write_done_
     gathered_lons = comm.gather(data_monitoring['lon'], root=0)
     gathered_lats = comm.gather(data_monitoring['lat'], root=0)
     gathered_heights = comm.gather(data_monitoring['height'], root=0)
+    gathered_ids = comm.gather(data_monitoring['id'], root=0)
 
     # On the PE that has all the gathered data
     if comm.Get_rank() == 0:
@@ -158,9 +163,11 @@ def write_monitoring_stations(datetime, comm, data_monitoring, first_write_done_
         lons_flat = np.concatenate(gathered_lons)
         lats_flat = np.concatenate(gathered_lats)
         heights_flat = np.concatenate(gathered_heights)
+        ids_flat = np.concatenate(gathered_ids)
 
         # Prepare correct amount of station ids
-        station_ids = [f"station_{i}" for i in range(avg_CH4_flat.shape[0])]
+        # station_ids = [f"station_{i}" for i in range(avg_CH4_flat.shape[0])]
+        station_ids = ids_flat
 
         # Create the xarray Dataset, with axis station and time. Each station is identified by their lon, lat and height
         ds = xr.Dataset(
@@ -214,26 +221,49 @@ def write_monitoring_stations(datetime, comm, data_monitoring, first_write_done_
     data_monitoring['CH4'][:] = 0
     return True
 
-def read_in_monitoring_stations(datetime, comm, tree, decomp_domain, clon, hhl, number_of_NN):
-    monitoring_lons = np.array([26.0, 23.0]) # predefine the monitoring stations. This could in future also be done via file inread
-    monitoring_lats = np.array([46.0, 47.0])
-    monitoring_heights = np.array([0.0, 0.0])
-    monitoring_is_abg = np.array([True, True])
+def read_in_monitoring_stations(datetime, comm, tree, decomp_domain, clon, hhl, number_of_NN, file_name):
+    if comm.Get_rank() == 0:
+        df = pd.read_csv(file_name, sep=';')
+        df.dropna(how='all', inplace=True)
+
+        df['height'] = df['Elevation (masl)'].combine_first(df['Sheight (magl)'])
+        df['is_abg'] = df['Elevation (masl)'].isna()
+
+        df = df.drop_duplicates(subset='ID', keep='first')
+
+        monitoring_lons = df['Longitude'].to_numpy()
+        monitoring_lats = df['Latitude'].to_numpy()
+        monitoring_heights = df['height'].to_numpy()
+        monitoring_is_abg = df['is_abg'].to_numpy()
+        monitoring_ids = df['ID'].to_numpy()
+    else: 
+        monitoring_lons = None
+        monitoring_lats = None
+        monitoring_heights = None
+        monitoring_is_abg = None
+        monitoring_ids = None
+    
+    # Broadcast the data to all processes, from root 0
+    monitoring_lons = comm.bcast(monitoring_lons, root=0)
+    monitoring_lats = comm.bcast(monitoring_lats, root=0)
+    monitoring_heights = comm.bcast(monitoring_heights, root=0)
+    monitoring_is_abg = comm.bcast(monitoring_is_abg, root=0)
+    monitoring_ids = comm.bcast(monitoring_ids, root=0)
+
      # Find all of the monitoring stations in this local PE's domain and save all relevant data
     (jc_loc_monitoring, jb_loc_monitoring, vertical_indices_monitoring1, vertical_indices_monitoring2, vertical_weight_monitoring,  weights_monitoring, 
-        monitoring_lons, monitoring_lats, monitoring_heights, monitoring_is_abg) = find_stations_monitor(
-        monitoring_lons, monitoring_lats, monitoring_heights, monitoring_is_abg, tree, decomp_domain, clon, hhl, number_of_NN)
+        monitoring_lons, monitoring_lats, monitoring_heights, monitoring_is_abg, monitoring_ids) = find_stations_monitor(
+        monitoring_lons, monitoring_lats, monitoring_heights, monitoring_is_abg, tree, decomp_domain, clon, hhl, number_of_NN, monitoring_ids)
 
     current_CH4_monitoring = np.zeros(monitoring_lons.shape, dtype=np.float64) # Initialize the array for the CH4 monitoring to 0
     number_of_timesteps = 0
-    keys = ['lon', 'lat', 'height', 'jc_loc', 'jb_loc', 'vertical_index1', 'vertical_index2', 'vertical_weight', 'horizontal_weight', 'CH4', 'number_of_steps']
-    values = [monitoring_lons, monitoring_lats, monitoring_heights, jc_loc_monitoring, jb_loc_monitoring, vertical_indices_monitoring1, vertical_indices_monitoring2, vertical_weight_monitoring, weights_monitoring, current_CH4_monitoring, number_of_timesteps]
+    keys = ['lon', 'lat', 'height', 'jc_loc', 'jb_loc', 'vertical_index1', 'vertical_index2', 'vertical_weight', 'horizontal_weight', 'CH4', 'number_of_steps', 'id']
+    values = [monitoring_lons, monitoring_lats, monitoring_heights, jc_loc_monitoring, jb_loc_monitoring, vertical_indices_monitoring1, vertical_indices_monitoring2, vertical_weight_monitoring, weights_monitoring, current_CH4_monitoring, number_of_timesteps, monitoring_ids]
     data = {keys[i]:values[i] for i in range(len(keys))}
 
     return data
 
 def tracking_CH4_monitoring(datetime, CH4_EMIS_np, CH4_BG_np, data):
-    ## First we do the stationary monitoring
     # Fetch CH4 values in the correct indices, this fetches per monitoring station NUMBER_OF_NN points
     # Also, we want the CH4 Emissions in ppb. And the EMIS is not yet in ppb but just in parts per part. So we multiply by 1e9
     CH4_monitoring_all1 = (

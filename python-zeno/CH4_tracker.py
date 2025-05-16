@@ -22,7 +22,7 @@ from scipy.spatial import KDTree
 import datetime as datetimelib
 import os
 
-# Manually specify the plugin directory — adjust if your path changes
+# Manually specify the plugin directory
 plugin_dir = "/capstor/scratch/cscs/zhug/Romania6km/python-zeno"
 if plugin_dir not in sys.path:
     sys.path.append(plugin_dir)
@@ -30,28 +30,33 @@ if plugin_dir not in sys.path:
 from monitoring_stations import *
 from flight import *
 from satellite import *
+from monitoring_stations_2 import *
 
 ## Constants:
 NUMBER_OF_NN = 4 # Number of nearest neighbour cells over which should be interpolated
+time_interval_writeout = 3600 # variable saying how often you want to writeout the results, in seconds
 N_COMPUTE_PES = 123  # number of compute PEs
 jg = 1 # we do compututations only on domain 1, as in our case our grid only has one domain
 msgrank = 0 # Rank that prints messages
 days_of_flights = [[2019, 10, 7], [2019, 10, 8]] # Up until now manually put in the dates of the flights
-start_model = datetimelib.datetime(2019, 1, 1)
-do_monitoring_stations = True
+# start_model = datetimelib.datetime(2019, 1, 1)
+do_monitoring_stations = False
+do_monitoring_stations2 = False
 do_satellite = True
 do_flights = True
-# tropomi_filename = "TROPOMI_SRON_prs_flipped_20190101_20191231.nc"
-tropomi_filename = "TROPOMI_SRON_20190101_20191231.nc"
+tropomi_filename = "TROPOMI_SRON_prs_flipped_20190101_20191231.nc"
+# tropomi_filename = "TROPOMI_SRON_20190101_20191231.nc"
 cams_base_path = "/capstor/scratch/cscs/zhug/Romania6km/input/CAMS/LBC/"
 cams_params_file = "cams73_v22r2_ch4_conc_surface_inst_201910.nc"
+stations_filename = "/capstor/scratch/cscs/zhug/Romania6km/input/ICON_observations/stations_flexpart_all.csv"
+path_to_csv_monitoring_stations = "/capstor/scratch/cscs/zhug/Romania6km/input/ICON_observations/"
 days_of_flights_datetime = []
 for entry in days_of_flights:
     days_of_flights_datetime.append(datetimelib.date(entry[0], entry[1], entry[2]))
-time_interval_writeout = 900 # variable saying how often you want to writeout the results, in seconds
 
 ## Defining variables:
 first_write_done_monitoring = False # Help to know if output file already exists
+first_write_done_monitoring2 = False
 
 cams_prev_data = None
 cams_next_data = None
@@ -88,7 +93,7 @@ def stations_init():
     global cams_files_dict
     # MPI variables
     global comm, rank
-    global data_monitoring_stations, data_flight_to_do, data_flight_done, data_satellite_to_do, data_satellite_done
+    global data_monitoring_stations, data_flight_to_do, data_flight_done, data_satellite_to_do, data_satellite_done, data_monitoring_stations2_to_do, data_monitoring_stations2_done
 
     world_comm = MPI.COMM_WORLD
     group_world = world_comm.Get_group()
@@ -104,6 +109,7 @@ def stations_init():
     number_of_timesteps = 0 # number of timesteps, as we are initializing we set it to 0
     
     datetime = comin.current_get_datetime()
+    datetime_np = pd.to_datetime(datetime)
     # All arrays are for domain 1 only
     # We read in all of the domain data we need. We read it in only once and then save it as a global variable
     domain = comin.descrdata_get_domain(jg)
@@ -118,13 +124,16 @@ def stations_init():
 
     # Get all of the monitoring stations and save all of the relevant data
     if(do_monitoring_stations):
-        data_monitoring_stations = read_in_monitoring_stations(datetime, comm, tree, decomp_domain, clon, hhl, NUMBER_OF_NN)
+        data_monitoring_stations = read_in_monitoring_stations(datetime, comm, tree, decomp_domain, clon, hhl, NUMBER_OF_NN, stations_filename)
+
+    if(do_monitoring_stations2):
+        data_monitoring_stations2_to_do, data_monitoring_stations2_done = read_in_monitoring_stations2(datetime, comm, tree, decomp_domain, clon, hhl, NUMBER_OF_NN, stations_filename, path_to_csv_monitoring_stations)
 
     if(do_flights):
         data_flight_to_do, data_flight_done = initialize_empty()
 
     if(do_satellite):
-        data_satellite_to_do, data_satellite_done, cams_files_dict = read_in_satellite_data(datetime, comm, tree, decomp_domain, clon, start_model, tropomi_filename, cams_base_path, cams_params_file)
+        data_satellite_to_do, data_satellite_done, cams_files_dict = read_in_satellite_data(datetime, comm, tree, decomp_domain, clon, datetime_np, tropomi_filename, cams_base_path, cams_params_file)
 
 @comin.register_callback(comin.EP_ATM_TIMELOOP_START)
 def input_data_on_the_fly():
@@ -138,9 +147,13 @@ def input_data_on_the_fly():
     datetime = comin.current_get_datetime()
 
     # Currently we read in at midnight for the following day
-    if(do_flights and pd.to_datetime(datetime).time() == datetimelib.time(0,0) and datetime in days_of_flights_datetime):
-       data_flight_to_do, data_flight_done = read_in_flight_data(datetime, comm, tree, decomp_domain, clon, hhl, NUMBER_OF_NN)
-
+    # if(do_flights and pd.to_datetime(datetime).time() == datetimelib.time(0,0) and pd.to_datetime(datetime) in days_of_flights_datetime):
+    if do_flights and pd.to_datetime(datetime).time() == datetimelib.time(0, 0):
+        # if pd.to_datetime(datetime).date() in [datetimelib.date(*d) for d in days_of_flights]:
+        if pd.to_datetime(datetime).date() in days_of_flights_datetime:
+            data_flight_to_do, data_flight_done = read_in_flight_data(datetime, comm, tree, decomp_domain, clon, hhl, NUMBER_OF_NN)
+        # else:
+        #     data_flight_to_do, data_flight_done = initialize_empty()
     # Read in the CAMS data
     if do_satellite and (pd.to_datetime(datetime).time() == datetimelib.time(0,0) or pd.to_datetime(datetime).time() == datetimelib.time(6,0) or pd.to_datetime(datetime).time() == datetimelib.time(12,0) or pd.to_datetime(datetime).time() == datetimelib.time(18,0)):
         cams_prev_data, cams_next_data = update_cams(datetime, cams_files_dict, cams_prev_data, cams_next_data)
@@ -151,7 +164,7 @@ def tracking_CH4_total():
     # general info
     global number_of_timesteps, first_write_done_monitoring
     # stationary monitoring
-    global data_monitoring_stations, data_flight_to_do, data_flight_done, data_satellite_to_do, data_satellite_done
+    global data_monitoring_stations, data_flight_to_do, data_flight_done, data_satellite_to_do, data_satellite_done, data_monitoring_stations2_to_do, data_monitoring_stations2_done
 
     dtime = comin.descrdata_get_timesteplength(jg) # size of every timestep 
     datetime = comin.current_get_datetime() # get datetime info. example for format: 2019-01-01T00:01:00.000
@@ -166,21 +179,26 @@ def tracking_CH4_total():
     ## Monitoring of the CH4 for the different problems
     if do_monitoring_stations:
         tracking_CH4_monitoring(datetime, CH4_EMIS_np, CH4_BG_np, data_monitoring_stations)
+    if do_monitoring_stations2:
+        tracking_CH4_monitoring2(datetime, CH4_EMIS_np, CH4_BG_np, data_monitoring_stations2_to_do, data_monitoring_stations2_done)
     if do_flights:
         tracking_CH4_flight(datetime, CH4_EMIS_np, CH4_BG_np, data_flight_to_do, data_flight_done)
     if do_satellite:
-        tracking_CH4_satellite(datetime, comm, CH4_EMIS_np, CH4_BG_np, pres_ifc_np, pres_np, data_satellite_to_do, data_satellite_done, cams_prev_data, cams_next_data, cams_files_dict)
+        tracking_CH4_satellite(datetime, comm, CH4_EMIS_np, CH4_BG_np, pres_ifc_np, pres_np, data_satellite_to_do, data_satellite_done, cams_prev_data, cams_next_data)
         
 
     ## Writeout
     elapsed_time = dtime * number_of_timesteps # Time that has elapsed since last writeout (or since start if there was no writeout yet)
     if (elapsed_time >= time_interval_writeout): # If we are above the time intervall writeout defined on the very top, we want to write out
-        if do_monitoring_stations:
-            first_write_done_monitoring = write_monitoring_stations(datetime, comm, data_monitoring_stations, first_write_done_monitoring) # Write out the monitoring stations
+        if do_monitoring_stations2:
+            first_write_done_monitoring2 = write_monitoring_stations(datetime, comm, data_monitoring_stations2_done, first_write_done_monitoring2)
         if do_flights:
             write_singlepoints(datetime, comm, data_flight_done) # Write out the flight data that is done
         if do_satellite:
             write_satellite(datetime, comm, data_satellite_done) # Write out the satellite data that is done
+
+    if do_monitoring_stations and pd.to_datetime(datetime).time().minute == 0:
+        first_write_done_monitoring = write_monitoring_stations(datetime, comm, data_monitoring_stations, first_write_done_monitoring) # Write out the monitoring stations every full hour
 
         # Reset data
         number_of_timesteps = 0

@@ -30,6 +30,7 @@ def lonlat2xyz(lon, lat):
     clat = np.cos(lat) 
     return clat * np.cos(lon), clat * np.sin(lon), np.sin(lat)
 
+# # This was a helper function for a polygon based tropomi observation
 # def map_tropomi_to_icon(tropomi_lon_corners, tropomi_lat_corners, tree, index_map):
 #     try:
 #         tropomi_poly = Polygon(zip(tropomi_lon_corners, tropomi_lat_corners))
@@ -66,19 +67,17 @@ def find_stations_satellite(lons, lats, timesteps, tree, decomp_domain, clon, pa
     # Loop thorugh every station
     for lon, lat, timestep, pavg0, pw, ak, qa0 in zip(lons, lats, timesteps, pavg0_sat, pw_sat, ak_sat, qa0_sat):
         
-        # Query the tree for the NUMBER_OF_NN nearest cells
+        # Query the tree for the nearest cell
         dd, ii = tree.query([lonlat2xyz(np.deg2rad(lon), np.deg2rad(lat))], k = 1)
 
         # Check if the nearest cell is in this PE's domain and is owned by this PE. This ensures that each station is only done by one PE
         if decomp_domain.ravel()[ii[0]] == 0:
             jc_loc, jb_loc = np.unravel_index(ii[0], clon.shape) # Extract the indexes
 
-            xyz_pt = lonlat2xyz(np.deg2rad(lon), np.deg2rad(lat))
-            cams_distances, cams_index = cams_tree.query(xyz_pt, k = 1)
+            # Compute frac_cams and cams_index for later appending cams data to the model data
+            cams_distances, cams_index = cams_tree.query([lonlat2xyz(np.deg2rad(lon), np.deg2rad(lat))], k = 1)
             cams_prev = timestep.replace(hour=(timestep.hour // 6) * 6, minute=0, second=0, microsecond=0)
             cams_next = cams_prev + datetimelib.timedelta(hours=6)
-
-    
             frac_cams = (timestep - cams_prev).total_seconds() / (cams_next - cams_prev).total_seconds()
 
             # Append all data, for the cells that were found in this PE's domain
@@ -111,11 +110,10 @@ def find_stations_satellite(lons, lats, timesteps, tree, decomp_domain, clon, pa
 
 def write_satellite(datetime, comm, done_data):
     """Function to writeout the single timepoint data"""
-    # global done_counter_sat, comm
 
     done_data_local = None
     done_counter = done_data['counter']
-    # Collect the local single point data, that we want to write out
+    # Collect the local point data, that we want to write out
     if done_counter > 0:
         done_data_local = {
             "lon": done_data['lon'][:done_counter],
@@ -146,21 +144,21 @@ def write_satellite(datetime, comm, done_data):
             for key in final_data:
                 final_data[key] = np.concatenate(final_data[key])
             
-            # (Convert datetime64 to Unix timestamp in seconds)
-            # final_data["timepoint"] = final_data["timepoint"].astype('int64') // int(1e9)
             df = pd.DataFrame(final_data)
-            
-            df = df.sort_values(by="timepoint")
+            df = df.sort_values(by="timepoint") # Sort because they could be unsorted because of the gathering
 
-            # Csv filename, will maybe change later, when we know how the satellite data csv is named
+            # Csv filename
             csv_file = "satellite_data" + ".csv"
 
             # Write to csv, write the header only if the file does not yet exist         
             file_exists = os.path.isfile(csv_file)
             df.to_csv(csv_file, mode='a', header=not file_exists, index=False)
+            
+    done_data['counter'] = 0 # Reset the done counter
 
 def read_in_satellite_data(datetime, comm, tree, decomp_domain, clon, start_model, tropomi_filename, cams_base_path, cams_params_file):
-    cams_files_dict = {}
+    """function to read in the satellite data for the whole year"""
+    cams_files_dict = {} # Dictionary for the cams file names
     start = pd.to_datetime(datetime)
     end = datetimelib.datetime(2020, 1, 30, 0)
 
@@ -176,16 +174,17 @@ def read_in_satellite_data(datetime, comm, tree, decomp_domain, clon, start_mode
 
     if comm.Get_rank() == 0:
         tropomi_ds = xr.open_dataset(tropomi_filename)
-        raw_times_satellite = tropomi_ds['date'].values
+        # Extract all the needed values
+        times_sat = tropomi_ds['date'].values
         satellite_lons = tropomi_ds['lon'].values
         satellite_lats = tropomi_ds['lat'].values
-        # ref_time = pd.to_datetime("2019-01-01 11:14:35.629000")
         pavg0_sat = tropomi_ds['pavg0'].values
         qa0_sat = tropomi_ds['qa0'].values
         ak_sat = tropomi_ds['ak'].values
         pw_sat = tropomi_ds['pw'].values
-        obs_time_dts = pd.to_datetime(raw_times_satellite)
+        obs_time_dts = pd.to_datetime(times_sat)
         
+        # Only keep the points, where the time is later (or equal) than now
         valid_mask = obs_time_dts >= start_model
         satellite_lons = satellite_lons[valid_mask]
         satellite_lats = satellite_lats[valid_mask]
@@ -194,16 +193,26 @@ def read_in_satellite_data(datetime, comm, tree, decomp_domain, clon, start_mode
         ak_sat = ak_sat[valid_mask]
         qa0_sat = qa0_sat[valid_mask]
         obs_time_dts = obs_time_dts[valid_mask]
+
+        # Load one example CAMS file, for computing the correct CAMS index
         cams_example_time = start.replace(hour=(start.hour // 6) * 6, minute=0, second=0, microsecond=0)
         example_file = cams_files_dict[cams_example_time]
         cams_ds = xr.open_dataset(example_file)
         cams_clon = np.asarray(cams_ds["clon"])
         cams_clat = np.asarray(cams_ds["clat"])
+
+        # Load a CAMS parameter file with parameters needed later
         cams_param_ds = xr.open_dataset(cams_params_file)
         hyam = cams_param_ds["hyam"].values
         hybm = cams_param_ds["hybm"].values
         hyai = cams_param_ds["hyai"].values
         hybi = cams_param_ds["hybi"].values
+
+        # Reverse CAMS hybrid coefficients so that they go from TOA to surface
+        hyam = hyam[::-1]
+        hybm = hybm[::-1]
+        hyai = hyai[::-1]
+        hybi = hybi[::-1]
     else:
         satellite_lons = None
         satellite_lats = None
@@ -234,37 +243,12 @@ def read_in_satellite_data(datetime, comm, tree, decomp_domain, clon, start_mode
     hyai = comm.bcast(hyai, root=0)
     hybi = comm.bcast(hybi, root=0)
 
-
+    # Create the cams tree for searching later
     cams_xyz = np.c_[lonlat2xyz(cams_clon, cams_clat)]
     cams_tree = KDTree(cams_xyz)
 
     (jc_loc_satellite, jb_loc_satellite, satellite_lons, satellite_lats, satellite_timestep, pavg0_sat, pw_sat, ak_sat, qa0_sat, cams_indices_sat, fracs_cams) = find_stations_satellite(satellite_lons, satellite_lats, obs_time_dts, tree, decomp_domain, clon, pavg0_sat, pw_sat, ak_sat, qa0_sat, cams_tree)
-    # tc = []
-    # tc_omv = [] # get the OMV-signal only in the profile
-
-    # Preallocate arrays to avoid appending repeatedly
-    # gridindices = []
-    # obsindices = []
-    # tcindices = []
-    # ncount = 0
-
-    # cams_prevs = [
-    #     obs_time_dt.replace(hour=(datetime.hour // 6) * 6, minute=0, second=0, microsecond=0)
-    #     for obs_time_dt in satellite_timestep
-    # ]
-    # cams_nexts = [cams_prev + datetimelib.timedelta(hours=6) for cams_prev in cams_prevs]
-
-    # Compute fractions in one go
-    # fracs_cams = [
-    #     (obs_time_dt - cams_prev).total_seconds() / (cams_next - cams_prev).total_seconds()
-    #     for obs_time_dt, cams_prev, cams_next in zip(satellite_timestep, cams_prevs, cams_nexts)
-    # ]
-
-    # Preload pressure profiles to avoid repeatedly extracting them
-    # model_data_cache = {}
-    # cams_pressure_cache = {}
-    # cams_interface_cache = {}
-    # cams_profile_cache = {}
+   
     N_satellite_points = satellite_lons.shape[0] # Amount of satellite points in the local PE
 
     # Initialize all needed arrays as empty arrays of correct size
@@ -274,6 +258,7 @@ def read_in_satellite_data(datetime, comm, tree, decomp_domain, clon, start_mode
     done_CH4_sat = np.empty(N_satellite_points, dtype=np.float64)
     done_counter_sat = 0
 
+    # Load all data into Dicts
     keys_to_do = ['lon', 'lat', 'timestep', 'jc_loc', 'jb_loc', 'pavg0', 'pw', 'ak', 'qa0', 'cams_index', 'frac_cams', 'hyam', 'hybm', 'hyai', 'hybi']
     values_to_do = [satellite_lons, satellite_lats, satellite_timestep, jc_loc_satellite, jb_loc_satellite, pavg0_sat, pw_sat, ak_sat, qa0_sat, cams_indices_sat, fracs_cams, hyam, hybm, hyai, hybi]
     local_data_to_do = {keys_to_do[i]:values_to_do[i] for i in range(len(keys_to_do))}
@@ -282,10 +267,11 @@ def read_in_satellite_data(datetime, comm, tree, decomp_domain, clon, start_mode
     values_done = [done_lons_sat, done_lats_sat, done_times_sat, done_CH4_sat, done_counter_sat]
     local_data_done = {keys_done[i]:values_done[i] for i in range(len(keys_done))}
     
-    return local_data_to_do, local_data_done, cams_files_dict
+    return local_data_to_do, local_data_done, cams_files_dict # Return all of the Data in Dicts
 
 
 def update_cams(datetime, cams_files_dict, cams_prev_data=None, cams_next_data=None):
+    """Short function to update the current cams data, needs to be updated every 6 hours at 0, 6, 12 and 18"""
     cams_prev_time = pd.to_datetime(datetime)
     cams_next_time = cams_prev_time + datetimelib.timedelta(hours=6)
     if cams_prev_data is not None:
@@ -297,8 +283,9 @@ def update_cams(datetime, cams_files_dict, cams_prev_data=None, cams_next_data=N
     return cams_prev_data, cams_next_data
 
 
-def tracking_CH4_satellite(datetime, comm, CH4_EMIS_np, CH4_BG_np, pres_ifc_np, pres_np, data_to_do, data_done, cams_prev_data, cams_next_data, cams_files_dict):
-    if data_to_do['timestep'].size > 0: # Checks if there is still work to do this day
+def tracking_CH4_satellite(datetime, comm, CH4_EMIS_np, CH4_BG_np, pres_ifc_np, pres_np, data_to_do, data_done, cams_prev_data, cams_next_data):
+    """Function to track the satellite CH4"""
+    if data_to_do['timestep'].size > 0: # Checks if there is still work to do
 
         model_time_np = np.datetime64(datetime)
         # mask to mask out the stations, where the model time is greater or equal to the moment we want to measure. They are ready for measurement
@@ -312,40 +299,29 @@ def tracking_CH4_satellite(datetime, comm, CH4_EMIS_np, CH4_BG_np, pres_ifc_np, 
             frac_cams_ready = frac_cams_ready[:, np.newaxis]
             cams_indices_ready = data_to_do['cams_index'][ready_mask]
 
-            pb_mod = (pres_ifc_np[jc_ready_sat, ::-1, jb_ready_sat].squeeze()) / 1.e2
-            pb_mod_mc =(pres_np[jc_ready_sat, ::-1, jb_ready_sat].squeeze()) / 1.e2
+            ## In general the following applies. All data is from TOA to surface. Up until the get coef function, which expects the data the other way around
+            ## So there we turn everything around
+            
+            # Extract the pressure and CAMS data. For the CAMS data interpolate linearly between the 6 hour intervals
+            pb_mod = (pres_ifc_np[jc_ready_sat, :, jb_ready_sat].squeeze()) / 1.e2
+            pb_mod_mc =(pres_np[jc_ready_sat, :, jb_ready_sat].squeeze()) / 1.e2
 
-            # key_cams_prev = (cams_prevs[nobs].year, cams_prevs[nobs].month, cams_prevs[nobs].day, cams_prevs[nobs].hour)
-            # key_cams_next = (cams_nexts[nobs].year, cams_nexts[nobs].month, cams_nexts[nobs].day, cams_nexts[nobs].hour)
-            # if key_cams_prev not in cams_pressure_cache:
-            #     cams_pressure_cache[key_cams_prev] = cams_pressures[key_cams_prev]
-            #     cams_profile_cache[key_cams_prev] = cams_profiles[key_cams_prev]
-            #     cams_interface_cache[key_cams_prev] = cams_interfaces[key_cams_prev]
-            # if key_cams_next not in cams_pressure_cache:
-            #     cams_pressure_cache[key_cams_next] = cams_pressures[key_cams_next]
-            #     cams_profile_cache[key_cams_next] = cams_profiles[key_cams_next]
-            #     cams_interface_cache[key_cams_next] = cams_interfaces[key_cams_next]
-
-            # CAMS_p_prev = np.nanmean(cams_pressure_cache[key_cams_prev][mindices],axis=0)
-            # CAMS_p_next = np.nanmean(cams_pressure_cache[key_cams_next][mindices],axis=0)
-            # CAMS_pressures = (1. - frac_cams) * CAMS_p_prev + frac_cams * CAMS_p_next
-
-            # CAMS_i_prev = np.nanmean(cams_interface_cache[key_cams_prev][mindices],axis=0)
-            # CAMS_i_next = np.nanmean(cams_interface_cache[key_cams_next][mindices],axis=0)
-            # CAMS_interfaces = (1. - frac_cams) * CAMS_i_prev + frac_cams * CAMS_i_next
-
-            # CAMS_obs_prev = np.nanmean(cams_profile_cache[key_cams_prev][:, mindices],axis=1)
-            # CAMS_obs_next = np.nanmean(cams_profile_cache[key_cams_next][:, mindices],axis=1)
-            CAMS_obs_prev = cams_prev_data["CH4"].isel(time=0, ncells = cams_indices_ready).values.T
-            CAMS_obs_next = cams_next_data["CH4"].isel(time=0, ncells = cams_indices_ready).values.T
+            cams_indices_ready = cams_indices_ready.flatten()
+            CAMS_obs_prev = cams_prev_data["CH4"].isel(time=0, ncells = cams_indices_ready).values[::-1].T
+            CAMS_obs_next = cams_next_data["CH4"].isel(time=0, ncells = cams_indices_ready).values[::-1].T
 
             CAMS_aps_prev = cams_prev_data["ps"].isel(time=0, ncells = cams_indices_ready).values
             CAMS_aps_next = cams_next_data["ps"].isel(time=0, ncells = cams_indices_ready).values
 
             CAMS_aps_prev_reshaped = CAMS_aps_prev[:, np.newaxis]
             CAMS_aps_next_reshaped = CAMS_aps_next[:, np.newaxis]
-            hyam_new_axis, hybm_new_axis = data_to_do['hyam'][np.newaxis, :], data_to_do['hybm'][np.newaxis, :]
-            hyai_new_axis, hybi_new_axis = data_to_do['hyai'][np.newaxis, :], data_to_do['hybi'][np.newaxis, :]
+            N_ready = CAMS_aps_prev.shape[0]  # number of ready satellite points
+
+            hyam_new_axis = np.tile(data_to_do['hyam'], (N_ready, 1))
+            hybm_new_axis = np.tile(data_to_do['hybm'], (N_ready, 1))
+            hyai_new_axis = np.tile(data_to_do['hyai'], (N_ready, 1))
+            hybi_new_axis = np.tile(data_to_do['hybi'], (N_ready, 1))
+            # This is a formula I got from the CAMS data
             CAMS_p_prev =  (hyam_new_axis + hybm_new_axis * CAMS_aps_prev_reshaped) / 1.e2
             CAMS_p_next = (hyam_new_axis + hybm_new_axis * CAMS_aps_next_reshaped) / 1.e2
             CAMS_pressures = (1. - frac_cams_ready) * CAMS_p_prev + frac_cams_ready * CAMS_p_next
@@ -353,83 +329,75 @@ def tracking_CH4_satellite(datetime, comm, CH4_EMIS_np, CH4_BG_np, pres_ifc_np, 
             CAMS_i_prev = (hyai_new_axis + hybi_new_axis * CAMS_aps_prev_reshaped) / 1.e2
             CAMS_i_next =  (hyai_new_axis + hybi_new_axis * CAMS_aps_next_reshaped) / 1.e2
             CAMS_interfaces = (1. - frac_cams_ready) * CAMS_i_prev + frac_cams_ready * CAMS_i_next
-            
-            # if pb_mod.ndim == 1:
-            #     pb_min = np.min(pb_mod)
-            #     camsidx_vert = CAMS_pressures < pb_min  # or np.expand_dims(pb_mod, axis=0) if needed
-            # else:
-            #     pb_min = np.min(pb_mod, axis=1)
-            #     camsidx_vert = CAMS_pressures < pb_min[:, np.newaxis]
         
-            
+            # Extract the ICON CH4 profile, multiplying by 1e9 for the correct unit (ppb)
             ICON_profile = (
-                (Mda / MCH4) * CH4_BG_np[jc_ready_sat, ::-1, jb_ready_sat].squeeze() \
-                + 1.e9 * (Mda / MCH4) * CH4_EMIS_np[jc_ready_sat, ::-1, jb_ready_sat].squeeze()
+                (Mda / MCH4) * CH4_BG_np[jc_ready_sat, :, jb_ready_sat].squeeze() \
+                + 1.e9 * (Mda / MCH4) * CH4_EMIS_np[jc_ready_sat, :, jb_ready_sat].squeeze()
             )
             ICON_profile = np.squeeze(ICON_profile)
             
             
-
             CAMS_obs = (1. - frac_cams_ready) * CAMS_obs_prev + frac_cams_ready * CAMS_obs_next
+
+            ## The following code takes the ICON data and extends it by the CAMS data, as the ICON data does not go to very low pressures
             CAMS_profile = np.array([
-                CAMS_obs[i, CAMS_pressures[i] < np.min(pb_mod[i])]
+                CAMS_obs[i, CAMS_pressures[i] < np.min(pb_mod_mc[i])]
                 for i in range(CAMS_obs.shape[0])
             ], dtype=object)
-            # pb_cams = CAMS_pressures[camsidx_vert]
             pb_cams_mc = np.array([
-                CAMS_pressures[i, CAMS_pressures[i] < np.min(pb_mod[i])]
+                CAMS_pressures[i, CAMS_pressures[i] < np.min(pb_mod_mc[i])]
                 for i in range(CAMS_obs.shape[0])
             ], dtype=object)
-            # pb_cams_mc = np.array([
-            #     CAMS_interfaces[i, 1:][CAMS_pressures[i, :] < np.min(pb_mod[i, :])]
-            #     for i in range(CAMS_interfaces.shape[0])
-            # ], dtype=object)
-            CAMS_interfaces = CAMS_interfaces[:, 1:]
             pb_cams = np.array([
-                CAMS_interfaces[i, CAMS_pressures[i] < np.min(pb_mod[i])]
+                CAMS_interfaces[i, CAMS_interfaces[i] < np.min(pb_mod[i])]
                 for i in range(CAMS_obs.shape[0])
             ], dtype=object)
-            # pb_cams = np.array([
-            #     CAMS_pressures[i, :][CAMS_pressures[i, :] < np.min(pb_mod[i, :])]
-            #     for i in range(CAMS_pressures.shape[0])
-            # ], dtype=object)
-            # pb_cams_mc = CAMS_pressures[:, :][camsidx_vert]
-            # print("", file=sys.stderr)
-            # print("RANK: ", rank, " pb_mod shape: ", pb_mod.shape, " , pb_cams shape: ", pb_cams.shape, file=sys.stderr)
-            # print("RANK: ", rank, " pb_mod_mc shape: ", pb_mod_mc.shape, " , pb_cams_mc shape: ", pb_cams_mc.shape, file=sys.stderr)
+            # Was sometimes buggy, added this for safety
             ICON_profile = np.atleast_2d(ICON_profile)
             CAMS_profile = np.atleast_2d(CAMS_profile)
             pb_mod = np.atleast_2d(pb_mod)
             pb_cams = np.atleast_2d(pb_cams)
             pb_mod_mc = np.atleast_2d(pb_mod_mc)
             pb_cams_mc = np.atleast_2d(pb_cams_mc)
+            tracer_profile = np.array([
+                np.concatenate([CAMS_profile[i], ICON_profile[i]])
+                for i in range(len(CAMS_profile))
+            ], dtype=object)
 
-            tracer_profile = np.concatenate((ICON_profile, CAMS_profile), axis = 1)
-            pb_profile = np.concatenate((pb_mod, pb_cams), axis = 1)
-            pb_mc_profile = np.concatenate((pb_mod_mc, pb_cams_mc), axis = 1)
-            # tracer_profile = ICON_profile
-            # pb_profile = pb_mod
-            # pb_mc_profile = pb_mod_mc
+            pb_profile = np.array([
+                np.concatenate([pb_cams[i], pb_mod[i]])
+                for i in range(len(pb_cams))
+            ], dtype=object)
 
+            pb_mc_profile = np.array([
+                np.concatenate([pb_cams_mc[i], pb_mod_mc[i]])
+                for i in range(len(pb_cams_mc))
+            ], dtype=object)
+
+            # Now as we get to the get coef funciton we need to turn around all of the data to: from surface to TOA
+            # Also this computation is based on Michael Steiners computation
             pb_ret = data_to_do['pavg0'][ready_mask]
-            # pb_ret = Tdata_cleaned.pressure_levels[nobs].values
-            
+            coef_matrix = []
+            pb_ret = pb_ret[:, ::-1]
+            pb_profile = pb_profile[:, ::-1]
+            tracer_profile = tracer_profile[:, ::-1]
+            for i in range(pb_ret.shape[0]):
+                coefs = get_int_coefs(pb_ret[i], pb_profile[i])
 
-            coef_matrix = np.array([get_int_coefs(pb_ret[i], pb_profile[i]) for i in range(pb_ret.shape[0])])
+                coef_matrix.append(coefs)
 
-            # pwf = np.abs(np.diff(pb_ret) / np.ptp(pb_ret))
+            coef_matrix = np.array(coef_matrix)
+
             pwf = data_to_do['pw'][ready_mask]
+            pwf = pwf[:, ::-1]
             averaging_kernel = data_to_do['ak'][ready_mask]
+            averaging_kernel = averaging_kernel[:, ::-1]
             important_stuff = data_to_do['qa0'][ready_mask]
+            important_stuff = important_stuff[:, ::-1]
             avpw = pwf * averaging_kernel
             prior_col = np.sum(pwf * important_stuff, axis=1)
 
-            # print("RANK: ", rank, " coef_matrix shape: ", coef_matrix.shape, " , tracer_profile shape: ", tracer_profile.shape, file=sys.stderr)
-            # profile_intrp = np.matmul(coef_matrix, tracer_profile)
-            # profile_intrp = tracer_profile @ coef_matrix.T  # shape: (n_samples, 13)
-            for i in range(len(tracer_profile)):
-                if tracer_profile[i].shape[0] != pb_profile[i].shape[0] - 1:
-                    print(f"RANK {comm.Get_rank()} — Mismatch at i={i}: tracer_profile = {tracer_profile[i].shape}, pb_profile = {pb_profile[i].shape}", file=sys.stderr)
             profile_intrp = np.matmul(coef_matrix, tracer_profile[..., np.newaxis])[..., 0]
             tc = prior_col + np.sum(avpw * (profile_intrp - important_stuff), axis=1)
 
@@ -443,10 +411,10 @@ def tracking_CH4_satellite(datetime, comm, CH4_EMIS_np, CH4_BG_np, pres_ifc_np, 
             data_done['timestep'][done_counter:done_counter + num_ready] = data_to_do['timestep'][ready_mask]
             data_done['CH4'][done_counter:done_counter + num_ready] = tc
 
-            # Keep count of how many singlepoints are done
+            # Keep count of how many satellite points are done
             data_done['counter'] += num_ready
 
-            # Only keep the singlepoints that aren't done yet
+            # Only keep the satellite points that aren't done yet
             keep_mask = ~ready_mask
 
             keys_to_filter = [
