@@ -75,9 +75,10 @@ def find_stations_monitor2(lons, lats, heights_abs, are_abg, tree, decomp_domain
                     height_above_sea = height_abg + local_hhl[-1]
                 else:
                     height_above_sea = height_abs
-                    height_above_sea_abg = height_abg + local_hhl[-1]
-                    closest_approx_abg = np.min(np.abs(h_mid - height_above_sea_abg ))
-                    height_above_sea = height_above_sea + 0.5 * (closest_approx_abg - height_above_sea)
+                    model_ground_elevation = local_hhl[-1]
+                    model_topo_elev = height_abg + model_ground_elevation
+                    topo_error = height_abs - model_topo_elev
+                    height_above_sea = height_abs - 0.5 * topo_error
 
 
                 closest_index = int(np.argmin(np.abs(h_mid - height_above_sea)))
@@ -149,83 +150,212 @@ def find_stations_monitor2(lons, lats, heights_abs, are_abg, tree, decomp_domain
             np.array(lats_local, dtype = np.float64),
             np.array(heights_local, dtype = np.float64),
             np.array(are_abg_local, dtype = bool), 
-            np.array(ids_local, dtype = str), 
+            np.array(ids_local, dtype = 'U10'), 
             np.array(timesteps_local))
 
 
-def write_monitoring_stations2(datetime, comm, data_done, first_write_done_monitoring):
-    """Function to writeout the stationary monitoring stations"""
+# def write_monitoring_stations2(datetime, comm, data_done, first_write_done_monitoring):
+#     """Function to writeout the stationary monitoring stations"""
 
-    # Gather everything on root 0
-    gathered_avg_CH4 = comm.gather(data_done['CH4'], root=0)
-    gathered_lons = comm.gather(data_done['lon'], root=0)
-    gathered_lats = comm.gather(data_done['lat'], root=0)
-    gathered_heights = comm.gather(data_done['height'], root=0)
-    gathered_times = comm.gather(data_done['timestep'], root=0)
-    gathered_ids = comm.gather(data_done['id'], root=0)
+#     # Gather everything on root 0
+#     gathered_avg_CH4 = comm.gather(data_done['CH4'], root=0)
+#     gathered_lons = comm.gather(data_done['lon'], root=0)
+#     gathered_lats = comm.gather(data_done['lat'], root=0)
+#     gathered_heights = comm.gather(data_done['height'], root=0)
+#     gathered_times = comm.gather(data_done['timestep'], root=0)
+#     gathered_ids = comm.gather(data_done['id'], root=0)
 
-    # On the PE that has all the gathered data
-    if comm.Get_rank() == 0:
-        # Flatten the data
-        avg_CH4_flat = np.concatenate(gathered_avg_CH4)
-        lons_flat = np.concatenate(gathered_lons)
-        lats_flat = np.concatenate(gathered_lats)
-        heights_flat = np.concatenate(gathered_heights)
-        ids_flat = np.concatenate(gathered_ids)
-        timesteps_flat = np.concatenate(gathered_times)
+#     # On the PE that has all the gathered data
+#     if comm.Get_rank() == 0:
+#         # Flatten the data
+#         avg_CH4_flat = np.concatenate(gathered_avg_CH4)
+#         lons_flat = np.concatenate(gathered_lons)
+#         lats_flat = np.concatenate(gathered_lats)
+#         heights_flat = np.concatenate(gathered_heights)
+#         ids_flat = np.concatenate(gathered_ids)
+#         timesteps_flat = np.concatenate(gathered_times)
 
-        station_ids = ids_flat
+#         station_ids = ids_flat
 
-        # Create the xarray Dataset, with axis station and time. Each station is identified by their lon, lat and height
-        ds = xr.Dataset(
-            {
-                "avg_CH4": (["station", "time"], avg_CH4_flat[..., np.newaxis]),
-            },
-            coords={
-                "station": station_ids,
-                "lon": ("station", lons_flat),
-                "lat": ("station", lats_flat),
-                "height": ("station", heights_flat),
-                "time": ("time", timesteps_flat),
-            },
-        )
+#         # Create the xarray Dataset, with axis station and time. Each station is identified by their lon, lat and height
+#         ds = xr.Dataset(
+#             {
+#                 "avg_CH4": (["station", "time"], avg_CH4_flat[..., np.newaxis]),
+#             },
+#             coords={
+#                 "station": station_ids,
+#                 "lon": ("station", lons_flat),
+#                 "lat": ("station", lats_flat),
+#                 "height": ("station", heights_flat),
+#                 "time": ("time", timesteps_flat),
+#             },
+#         )
 
-        # Metadata, set units etc.
-        ds["avg_CH4"].attrs["units"] = "ppb"
-        ds["avg_CH4"].attrs["long_name"] = "Average CH4 concentration over last hour"
-        ds["lon"].attrs["units"] = "degrees_east"
-        ds["lat"].attrs["units"] = "degrees_north"
-        ds["height"].attrs["units"] = "m"
-        ds["time"].attrs["standard_name"] = "time"
+#         # Metadata, set units etc.
+#         ds["avg_CH4"].attrs["units"] = "ppb"
+#         ds["avg_CH4"].attrs["long_name"] = "Average CH4 concentration over last hour"
+#         ds["lon"].attrs["units"] = "degrees_east"
+#         ds["lat"].attrs["units"] = "degrees_north"
+#         ds["height"].attrs["units"] = "m"
+#         ds["time"].attrs["standard_name"] = "time"
 
-        # Set the encoding of the time, unit is just set to beginning of 2019 for a little bit better readibility of the raw seconds data
-        encoding = {
-            "time": {
-                "units": "seconds since 2019-01-01 00:00:00",
-                "calendar": "proleptic_gregorian"
-            }
+#         # Set the encoding of the time, unit is just set to beginning of 2019 for a little bit better readibility of the raw seconds data
+#         encoding = {
+#             "time": {
+#                 "units": "seconds since 2019-01-01 00:00:00",
+#                 "calendar": "proleptic_gregorian"
+#             }
+#         }
+
+
+#         output_file = "tracked_ch4_2.nc" # filename of the nc file
+
+#         if not first_write_done_monitoring:
+#             # If we haven't yet written something out we just writeout
+#             ds.to_netcdf(output_file, mode="w", unlimited_dims=["time"], encoding=encoding, engine="netcdf4")
+#             del ds
+#             first_write_done_monitoring = True
+#         else:
+#             # If we have already written out data, we first read in the current data, then add our new data and then writeout again
+#             # Maybe this is very inefficient and for many stations we should maybe do it differently in the future
+#             existing_ds = xr.open_dataset(output_file)
+#             combined = xr.concat([existing_ds, ds], dim="time")
+#             existing_ds.close()
+#             combined.to_netcdf(output_file, mode="w", unlimited_dims=["time"], encoding=encoding, engine="netcdf4")
+#             combined.close()
+#             del ds
+    
+#     data_done['counter'] = 0
+#     return first_write_done_monitoring
+
+# def write_monitoring_stations2(datetime, comm, data_done, first_write_done_monitoring):
+#     """Function to write out the stationary monitoring stations"""
+
+#     # Local counter to know how many entries are valid
+#     done_counter = data_done['counter']
+
+#     # Prepare local data for gathering
+#     done_data_local = None
+#     if done_counter > 0:
+#         done_data_local = {
+#             "CH4": data_done['CH4'][:done_counter],
+#             "lon": data_done['lon'][:done_counter],
+#             "lat": data_done['lat'][:done_counter],
+#             "height": data_done['height'][:done_counter],
+#             "timestep": data_done['timestep'][:done_counter],
+#             "id": data_done['id'][:done_counter],
+#         }
+
+#     # Gather local results on rank 0
+#     gathered_done_data = comm.gather(done_data_local, root=0)
+
+#     if comm.Get_rank() == 0:
+#         # Merge and flatten the gathered data
+#         final_data = {key: [] for key in ['CH4', 'lon', 'lat', 'height', 'timestep', 'id']}
+#         for d in gathered_done_data:
+#             if d is not None:
+#                 for key in final_data:
+#                     final_data[key].append(d[key])
+
+#         # If there's anything to write
+#         if any(len(v) > 0 for v in final_data.values()):
+#             for key in final_data:
+#                 final_data[key] = np.concatenate(final_data[key])
+#             # Fix string truncation by converting to fixed-width string type
+#             station_ids = final_data["id"]
+#             station_ids = np.array(station_ids, dtype="S10")  # 10-char strings, adjust if needed
+#             station_ids = station_ids.astype(str)  # Convert back to normal str for xarray
+#             # Create xarray Dataset
+#             ds = xr.Dataset(
+#                 {
+#                     "avg_CH4": (["station"], final_data["CH4"]),
+#                 },
+#                 coords={
+#                     "station": station_ids,
+#                     "lon": ("station", final_data["lon"]),
+#                     "lat": ("station", final_data["lat"]),
+#                     "height": ("station", final_data["height"]),
+#                     "time": ("station", final_data["timestep"]),  # time per station
+#                 },
+#             )
+
+#             # Add metadata
+#             ds["avg_CH4"].attrs["units"] = "ppb"
+#             ds["avg_CH4"].attrs["long_name"] = "Average CH4 concentration over last hour"
+#             ds["lon"].attrs["units"] = "degrees_east"
+#             ds["lat"].attrs["units"] = "degrees_north"
+#             ds["height"].attrs["units"] = "m"
+#             ds["time"].attrs["standard_name"] = "time"
+
+#             # Encoding for NetCDF
+#             encoding = {
+#                 "time": {
+#                     "units": "seconds since 2019-01-01 00:00:00",
+#                     "calendar": "proleptic_gregorian"
+#                 }
+#             }
+
+#             output_file = "tracked_ch4_2.nc"
+
+#             if not first_write_done_monitoring:
+#                 ds.to_netcdf(output_file, mode="w", encoding=encoding, engine="netcdf4")
+#                 first_write_done_monitoring = True
+#             else:
+#                 existing_ds = xr.open_dataset(output_file)
+#                 combined = xr.concat([existing_ds, ds], dim="station")  # or time, depending on your structure
+#                 existing_ds.close()
+#                 combined.to_netcdf(output_file, mode="w", encoding=encoding, engine="netcdf4")
+#                 combined.close()
+
+#     data_done['counter'] = 0
+#     return first_write_done_monitoring
+
+def write_monitoring_stations2_csv(datetime, comm, data_done):
+    """Function to write stationary monitoring data to CSV using preallocated arrays with a counter."""
+
+    done_counter = data_done['counter']
+    done_data_local = None
+
+    if done_counter > 0:
+        done_data_local = {
+            "station_id": data_done['id'][:done_counter],
+            "lon": data_done['lon'][:done_counter],
+            "lat": data_done['lat'][:done_counter],
+            "height": data_done['height'][:done_counter],
+            "timepoint": data_done['timestep'][:done_counter],
+            "CH4": data_done['CH4'][:done_counter],
         }
 
+    gathered_done_data = comm.gather(done_data_local, root=0)
 
-        output_file = "tracked_ch4_2.nc" # filename of the nc file
+    if comm.Get_rank() == 0:
+        final_data = {
+            "station_id": [],
+            "lon": [],
+            "lat": [],
+            "height": [],
+            "timepoint": [],
+            "CH4": [],
+        }
 
-        if not first_write_done_monitoring:
-            # If we haven't yet written something out we just writeout
-            ds.to_netcdf(output_file, mode="w", unlimited_dims=["time"], encoding=encoding, engine="netcdf4")
-            del ds
-            first_write_done_monitoring = True
-        else:
-            # If we have already written out data, we first read in the current data, then add our new data and then writeout again
-            # Maybe this is very inefficient and for many stations we should maybe do it differently in the future
-            existing_ds = xr.open_dataset(output_file)
-            combined = xr.concat([existing_ds, ds], dim="time")
-            existing_ds.close()
-            combined.to_netcdf(output_file, mode="w", unlimited_dims=["time"], encoding=encoding, engine="netcdf4")
-            combined.close()
-            del ds
-    
+        for d in gathered_done_data:
+            if d is not None:
+                for key in final_data:
+                    final_data[key].append(d[key])
+
+        if any(len(lst) > 0 for lst in final_data.values()):
+            for key in final_data:
+                final_data[key] = np.concatenate(final_data[key])
+
+            df = pd.DataFrame(final_data)
+            df = df.sort_values(by="timepoint")
+            csv_file = "monitoring_modeled_2.csv"
+
+            file_exists = os.path.isfile(csv_file)
+            df.to_csv(csv_file, mode='a', header=not file_exists, index=False)
+
     data_done['counter'] = 0
-    return first_write_done_monitoring
+
 
 def read_in_monitoring_stations2(datetime, comm, tree, decomp_domain, clon, hhl, number_of_NN, final_stationslist_filename, path_to_csvs):
     if comm.Get_rank() == 0:
@@ -249,27 +379,36 @@ def read_in_monitoring_stations2(datetime, comm, tree, decomp_domain, clon, hhl,
         column_names = ["siteid", "year", "month", "day", "hour", "minute", "second", "value", "value_unc", "nvalue", "latitude", "longitude", "altitude", "elevation", "intake_height", "QCflag", "scale"]
         for file_name, meta_info_height in zip(files_list, sampling_height):
             full_path = os.path.join(path_to_csvs, file_name)
-            this_df = pd.read_csv(full_path, sep = ',', header = 9, skipinitialspace = True, names = column_names)
-            this_lats = this_df['latitude'].to_list()
-            this_lons = this_df['longitude'].to_list()
-            this_id = this_df['siteid'].to_list()
+            this_df = pd.read_csv(full_path, sep = ',', header = 8, skipinitialspace = True, names = column_names)
+            # this_lats = this_df['latitude'].to_list()
+            # this_lons = this_df['longitude'].to_list()
+            # this_id = this_df['siteid'].to_list()
             this_df['timestamp'] = pd.to_datetime(this_df[['year', 'month', 'day', 'hour', 'minute', 'second']])
-            this_timestep = this_df['timestamp'].to_list()
-            this_height_abg = this_df['intake_height'].to_list()
-            this_height = this_df['altitude'].to_list()
+            this_timestep = this_df['timestamp']
+            # this_height_abg = this_df['intake_height'].to_list()
+            # this_height = this_df['altitude'].to_list()
+            # if meta_info_height == 1:
+            #     this_is_abg = np.ones(len(this_height), dtype = bool)
+            # elif meta_info_height == 2:
+            #     this_is_abg = np.zeros(len(this_height), dtype = bool)
+            # Only keep the points, where the time is later (or equal) than now
+            valid_mask = this_timestep >= pd.to_datetime(datetime)
+            # this_lats = this_lats[valid_mask]
+            # this_lons = this_lons[valid_mask]
+            # this_id = this_id[valid_mask]
+            # this_height_abg = this_height_abg[valid_mask]
+            # this_height = this_height[valid_mask]
+            # this_is_abg = this_is_abg[valid_mask]
+            # this_timestep = this_timestep[valid_mask]
+            this_lats = this_df['latitude'].loc[valid_mask].to_list()
+            this_lons = this_df['longitude'].loc[valid_mask].to_list()
+            this_id = this_df['siteid'].loc[valid_mask].to_list()
+            this_height_abg = this_df['intake_height'].loc[valid_mask].to_list()
+            this_height = this_df['altitude'].loc[valid_mask].to_list()
             if meta_info_height == 1:
                 this_is_abg = np.ones(len(this_height), dtype = bool)
             elif meta_info_height == 2:
                 this_is_abg = np.zeros(len(this_height), dtype = bool)
-            # Only keep the points, where the time is later (or equal) than now
-            valid_mask = this_timestep >= pd.to_datetime(datetime)
-            this_lats = this_lats[valid_mask]
-            this_lons = this_lons[valid_mask]
-            this_id = this_id[valid_mask]
-            this_height_abg = this_height_abg[valid_mask]
-            this_height = this_height[valid_mask]
-            this_is_abg = this_is_abg[valid_mask]
-            this_timestep = this_timestep[valid_mask]
             
             monitoring_lons.extend(this_lons)
             monitoring_lats.extend(this_lats)
@@ -282,7 +421,7 @@ def read_in_monitoring_stations2(datetime, comm, tree, decomp_domain, clon, hhl,
         
         monitoring_lons = np.array(monitoring_lons)
         monitoring_lats = np.array(monitoring_lats)
-        monitoring_ids = np.array(monitoring_ids)
+        monitoring_ids = np.array(monitoring_ids, dtype='U10')
         monitoring_is_abg = np.array(monitoring_is_abg)
         monitoring_heights = np.array(monitoring_heights)
         monitoring_timesteps = np.array(monitoring_timesteps)
@@ -319,7 +458,7 @@ def read_in_monitoring_stations2(datetime, comm, tree, decomp_domain, clon, hhl,
     done_heights = np.empty(N_points, dtype=np.float64)
     done_times = np.empty(N_points, dtype='datetime64[ns]')
     done_CH4 = np.empty(N_points, dtype=np.float64)
-    done_ids = np.empty(N_points, dtype=str)
+    done_ids = np.empty(N_points, dtype='U10')
 
     done_counter = 0 # counter of how many of the points are already done (since last writeout)
 
@@ -366,7 +505,7 @@ def tracking_CH4_monitoring2(datetime, CH4_EMIS_np, CH4_BG_np, data_to_do, data_
             CH4_monitoring_all = CH4_monitoring_all1 + weights_vertical_ready * (CH4_monitoring_all2 - CH4_monitoring_all1)
             # If we have any data we add the current contribution while also multiplying by the weights
             if weights_ready.size > 0 and CH4_monitoring_all.size > 0:
-                data_to_do['CH4'] += np.sum(weights_ready * CH4_monitoring_all, axis=1)
+                data_to_do['CH4'][measuring_mask] += np.sum(weights_ready * CH4_monitoring_all, axis=1)
                 data_to_do['number_of_steps'][measuring_mask] += 1
 
         done_mask = data_to_do['timestep'] <= model_time_np # This data is done being monitored and can be output

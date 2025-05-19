@@ -26,8 +26,8 @@ export ECCODES_DEFINITION_PATH=/capstor/scratch/cscs/msteiner/spack-c2sm-eiger/s
 export LD_LIBRARY_PATH=/opt/cray/libfabric/1.15.2.0/lib64/:$LD_LIBRARY_PATH
 
 
-date=2019100400
-# date=2019010100
+# date=2019100400
+date=2019010100
 
 #basic folders
 WORKDIR=${SCRATCH}/Romania6km
@@ -104,7 +104,7 @@ cat > icon_master.namelist << EOF
 ! time_nml: specification of date and time------------------------------------
 &time_nml
  ! dt_restart                  =      604800
- ini_datetime_string         =      "2019-10-04T00:00:00Z"        ! initial date and time of the simulation
+ ini_datetime_string         =      "2019-01-01T00:00:00Z"        ! initial date and time of the simulation
  end_datetime_string         =      "2020-01-01T00:00:00Z"        ! end date and time of the simulation
 /
 EOF

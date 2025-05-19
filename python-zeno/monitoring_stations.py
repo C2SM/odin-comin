@@ -24,7 +24,7 @@ def lonlat2xyz(lon, lat):
     clat = np.cos(lat) 
     return clat * np.cos(lon), clat * np.sin(lon), np.sin(lat)
 
-def find_stations_monitor(lons, lats, heights, are_abg, tree, decomp_domain, clon, hhl, number_of_NN, ids):
+def find_stations_monitor(lons, lats, heights_abs, are_abg, tree, decomp_domain, clon, hhl, number_of_NN, ids, heights_abg):
     """Find the local stationary monitoring stations on each PE in the own domain and return all of the relevant data needed for computation"""
 
     # Define all lists as empty
@@ -41,7 +41,7 @@ def find_stations_monitor(lons, lats, heights, are_abg, tree, decomp_domain, clo
     ids_local = []
 
     # Loop through every station
-    for lon, lat, height, above_ground, id in zip(lons, lats, heights, are_abg, ids):
+    for lon, lat, height_abs, above_ground, id, height_abg in zip(lons, lats, heights_abs, are_abg, ids, heights_abg):
 
         # Query the tree for the NUMBER_OF_NN nearest cells
         dd, ii = tree.query([lonlat2xyz(np.deg2rad(lon), np.deg2rad(lat))], k = number_of_NN)
@@ -58,6 +58,7 @@ def find_stations_monitor(lons, lats, heights, are_abg, tree, decomp_domain, clo
             vertical_row2 = []
             weight_row = []
             weight_row_vertical  = []
+            height = height_abs
 
             # Now, we want to compute the correct vertical index for each of the NUMBER_OF_NN cells. 
             for jc, jb in zip(jc_loc, jb_loc):
@@ -66,9 +67,15 @@ def find_stations_monitor(lons, lats, heights, are_abg, tree, decomp_domain, clo
                 h_mid = 0.5 * (local_hhl[:-1] + local_hhl[1:])
                 
                 # As the height in the model is in height above sea, we want to add the lowest level hhl (which is the ground level) if the height is measured above ground
-                height_above_sea = height
+                height_above_sea = 0
                 if above_ground:
-                    height_above_sea += local_hhl[-1]
+                    height_above_sea = height_abg + local_hhl[-1]
+                else:
+                    height_above_sea = height_abs
+                    model_ground_elevation = local_hhl[-1]
+                    model_topo_elev = height_abg + model_ground_elevation
+                    topo_error = height_abs - model_topo_elev
+                    height_above_sea = height_abs - 0.5 * topo_error
 
                 closest_index = int(np.argmin(np.abs(h_mid - height_above_sea))) # This is the closest index
                 
@@ -139,7 +146,7 @@ def find_stations_monitor(lons, lats, heights, are_abg, tree, decomp_domain, clo
             np.array(lats_local, dtype = np.float64),
             np.array(heights_local, dtype = np.float64),
             np.array(are_abg_local, dtype = bool), 
-            np.array(ids_local, dtype = str))
+            np.array(ids_local, dtype = 'U10'))
 
 
 def write_monitoring_stations(datetime, comm, data_monitoring, first_write_done_monitoring):
@@ -226,34 +233,38 @@ def read_in_monitoring_stations(datetime, comm, tree, decomp_domain, clon, hhl, 
         df = pd.read_csv(file_name, sep=';')
         df.dropna(how='all', inplace=True)
 
-        df['height'] = df['Elevation (masl)'].combine_first(df['Sheight (magl)'])
-        df['is_abg'] = df['Elevation (masl)'].isna()
+        # df['height'] = df['Elevation (masl)'].combine_first(df['Sheight (magl)'])
+        # df['is_abg'] = df['Elevation (masl)'].isna()
+        df['is_abg'] = df['sampling_height'].map({1: True, 2: False})
 
         df = df.drop_duplicates(subset='ID', keep='first')
 
         monitoring_lons = df['Longitude'].to_numpy()
         monitoring_lats = df['Latitude'].to_numpy()
-        monitoring_heights = df['height'].to_numpy()
+        monitoring_heights_abs = df['Elevation (masl)'].to_numpy()
+        monitoring_heights_abg = df['Sheight (magl)'].to_numpy()
         monitoring_is_abg = df['is_abg'].to_numpy()
-        monitoring_ids = df['ID'].to_numpy()
+        monitoring_ids = df['ID'].astype('U10').to_numpy()
     else: 
         monitoring_lons = None
         monitoring_lats = None
-        monitoring_heights = None
+        monitoring_heights_abs = None
+        monitoring_heights_abg = None
         monitoring_is_abg = None
         monitoring_ids = None
     
     # Broadcast the data to all processes, from root 0
     monitoring_lons = comm.bcast(monitoring_lons, root=0)
     monitoring_lats = comm.bcast(monitoring_lats, root=0)
-    monitoring_heights = comm.bcast(monitoring_heights, root=0)
+    monitoring_heights_abg = comm.bcast(monitoring_heights_abg, root=0)
+    monitoring_heights_abs = comm.bcast(monitoring_heights_abs, root=0)    
     monitoring_is_abg = comm.bcast(monitoring_is_abg, root=0)
     monitoring_ids = comm.bcast(monitoring_ids, root=0)
 
      # Find all of the monitoring stations in this local PE's domain and save all relevant data
     (jc_loc_monitoring, jb_loc_monitoring, vertical_indices_monitoring1, vertical_indices_monitoring2, vertical_weight_monitoring,  weights_monitoring, 
         monitoring_lons, monitoring_lats, monitoring_heights, monitoring_is_abg, monitoring_ids) = find_stations_monitor(
-        monitoring_lons, monitoring_lats, monitoring_heights, monitoring_is_abg, tree, decomp_domain, clon, hhl, number_of_NN, monitoring_ids)
+        monitoring_lons, monitoring_lats, monitoring_heights_abs, monitoring_is_abg, tree, decomp_domain, clon, hhl, number_of_NN, monitoring_ids, monitoring_heights_abg)
 
     current_CH4_monitoring = np.zeros(monitoring_lons.shape, dtype=np.float64) # Initialize the array for the CH4 monitoring to 0
     number_of_timesteps = 0

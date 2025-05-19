@@ -39,15 +39,18 @@ N_COMPUTE_PES = 123  # number of compute PEs
 jg = 1 # we do compututations only on domain 1, as in our case our grid only has one domain
 msgrank = 0 # Rank that prints messages
 days_of_flights = [[2019, 10, 7], [2019, 10, 8], [2019, 10, 3]] # Up until now manually put in the dates of the flights
-do_monitoring_stations = False
-do_monitoring_stations2 = False
+do_monitoring_stations = True
+do_monitoring_stations2 = True
 do_satellite = True
 do_flights = True
 tropomi_filename = "TROPOMI_SRON_prs_flipped_20190101_20191231.nc"
 cams_base_path = "/capstor/scratch/cscs/zhug/Romania6km/input/CAMS/LBC/"
 cams_params_file = "/capstor/scratch/cscs/zhug/Romania6km/input/CAMS/cams73_v22r2_ch4_conc_surface_inst_201910.nc"
-stations_filename = "/capstor/scratch/cscs/zhug/Romania6km/input/ICON_observations/stations_flexpart_all.csv"
+# stations_filename = "/capstor/scratch/cscs/zhug/Romania6km/input/ICON_observations/stations_flexpart_all.csv"
+# csv_monitoring_stations2 = "/capstor/scratch/cscs/zhug/Romania6km/input/ICON_observations/final_stationlist_2019.csv"
 path_to_csv_monitoring_stations = "/capstor/scratch/cscs/zhug/Romania6km/input/ICON_observations/"
+stations_filename = "/capstor/scratch/cscs/zhug/Romania6km/input/ICON_observations/test_1.csv"
+csv_monitoring_stations2 = "/capstor/scratch/cscs/zhug/Romania6km/input/ICON_observations/testing.csv"
 days_of_flights_datetime = []
 for entry in days_of_flights:
     days_of_flights_datetime.append(datetimelib.date(entry[0], entry[1], entry[2]))
@@ -125,7 +128,7 @@ def stations_init():
         data_monitoring_stations = read_in_monitoring_stations(datetime, comm, tree, decomp_domain, clon, hhl, NUMBER_OF_NN, stations_filename)
 
     if(do_monitoring_stations2):
-        data_monitoring_stations2_to_do, data_monitoring_stations2_done = read_in_monitoring_stations2(datetime, comm, tree, decomp_domain, clon, hhl, NUMBER_OF_NN, stations_filename, path_to_csv_monitoring_stations)
+        data_monitoring_stations2_to_do, data_monitoring_stations2_done = read_in_monitoring_stations2(datetime, comm, tree, decomp_domain, clon, hhl, NUMBER_OF_NN, csv_monitoring_stations2, path_to_csv_monitoring_stations)
 
     if(do_flights):
         data_flight_to_do, data_flight_done = initialize_empty()
@@ -160,7 +163,7 @@ def input_data_on_the_fly():
 def tracking_CH4_total():
     """tracking of CH4 Emissions"""
     # general info
-    global number_of_timesteps, first_write_done_monitoring
+    global number_of_timesteps, first_write_done_monitoring, first_write_done_monitoring2
     # stationary monitoring
     global data_monitoring_stations, data_flight_to_do, data_flight_done, data_satellite_to_do, data_satellite_done, data_monitoring_stations2_to_do, data_monitoring_stations2_done
 
@@ -189,7 +192,8 @@ def tracking_CH4_total():
     elapsed_time = dtime * number_of_timesteps # Time that has elapsed since last writeout (or since start if there was no writeout yet)
     if (elapsed_time >= time_interval_writeout): # If we are above the time intervall writeout defined on the very top, we want to write out
         if do_monitoring_stations2:
-            first_write_done_monitoring2 = write_monitoring_stations(datetime, comm, data_monitoring_stations2_done, first_write_done_monitoring2)
+            # first_write_done_monitoring2 = write_monitoring_stations2(datetime, comm, data_monitoring_stations2_done, first_write_done_monitoring2)
+            write_monitoring_stations2_csv(datetime, comm, data_monitoring_stations2_done)
         if do_flights:
             write_singlepoints(datetime, comm, data_flight_done) # Write out the flight data that is done
         if do_satellite:
