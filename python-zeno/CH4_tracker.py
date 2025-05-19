@@ -17,8 +17,6 @@ from mpi4py import MPI
 import pandas as pd
 import sys
 from scipy.spatial import KDTree
-# from shapely.geometry import Polygon
-# from shapely.strtree import STRtree
 import datetime as datetimelib
 import os
 
@@ -57,7 +55,7 @@ for entry in days_of_flights:
 
 ## Defining variables:
 first_write_done_monitoring = False # Help to know if output file already exists
-first_write_done_monitoring2 = False
+# first_write_done_monitoring2 = False
 
 cams_prev_data = None
 cams_next_data = None
@@ -148,13 +146,8 @@ def input_data_on_the_fly():
     datetime = comin.current_get_datetime()
 
     # Currently we read in at midnight for the following day
-    # if(do_flights and pd.to_datetime(datetime).time() == datetimelib.time(0,0) and pd.to_datetime(datetime) in days_of_flights_datetime):
-    if do_flights and pd.to_datetime(datetime).time() == datetimelib.time(0, 0):
-        # if pd.to_datetime(datetime).date() in [datetimelib.date(*d) for d in days_of_flights]:
-        if pd.to_datetime(datetime).date() in days_of_flights_datetime:
-            data_flight_to_do, data_flight_done = read_in_flight_data(datetime, comm, tree, decomp_domain, clon, hhl, NUMBER_OF_NN)
-        # else:
-        #     data_flight_to_do, data_flight_done = initialize_empty()
+    if do_flights and pd.to_datetime(datetime).time() == datetimelib.time(0, 0) and pd.to_datetime(datetime).date() in days_of_flights_datetime:
+        data_flight_to_do, data_flight_done = read_in_flight_data(datetime, comm, tree, decomp_domain, clon, hhl, NUMBER_OF_NN)
     # Read in the CAMS data
     if do_satellite and (pd.to_datetime(datetime).time() == datetimelib.time(0,0) or pd.to_datetime(datetime).time() == datetimelib.time(6,0) or pd.to_datetime(datetime).time() == datetimelib.time(12,0) or pd.to_datetime(datetime).time() == datetimelib.time(18,0)):
         cams_prev_data, cams_next_data = update_cams(datetime, cams_files_dict, cams_prev_data, cams_next_data)

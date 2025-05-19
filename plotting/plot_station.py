@@ -18,7 +18,7 @@ time = [start_time + timedelta(seconds=int(t)) for t in time_var]
 
 # Plotting
 plt.figure(figsize=(10, 5))
-plt.plot(time, ch4_var, marker='o', linestyle='-')
+plt.plot(time, ch4_var, marker='o', linestyle='-', markersize=3)  # Reduced markersize
 plt.xlabel('Time')
 plt.ylabel('CH4 concentration (ppb)')
 plt.title('CH4 Concentration Over Time')
