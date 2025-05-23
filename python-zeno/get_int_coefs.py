@@ -1,30 +1,25 @@
+##
+# @file get_int_coefs.py
+#
+# @brief Helper function
+#
+# @section description_get_int_coefs Description
+# Helper Function
+#
+# @section libraries_get_int_coefs Libraries/Modules
+# - numpy library
+#
+# @section author_get_int_coefs Author(s)
+# - Created by ?? on ??
+#
+# Copyright (c) 2025 Empa.  All rights reserved.
+
+
 import numpy as np
 
 def get_int_coefs(pb_ret, pb_mod):
-    """
-    Computes a coefficients matrix to transfer a model profile onto
-    a retrieval pressure axis.
-    
-    If level_def=="layer_average", this assumes that profiles are
-    constant in each layer of the retrieval, bound by the pressure
-    boundaries pb_ret. In this case, the WRF model layer is treated
-    in the same way, and coefficients integrate over the assumed
-    constant model layers. This works with non-staggered WRF
-    variables (on "theta" points). However, this is actually not how
-    WRF is defined, and the implementation should be changed to
-    z-staggered variables. Details for this change are in a comment
-    at the beginning of the code.
-
-    If level_def=="pressure_boundary" (IMPLEMENTATION IN PROGRESS),
-    assumes that profiles, kernel and pwf are defined at pressure
-    boundaries that don't have a thickness (this is how OCO-2 data
-    are defined, for example). In this case, the coefficients
-    linearly interpolate adjacent model level points. This is
-    incompatible with the treatment of WRF in the above-described
-    layer-average assumption, but is closer to how WRF is actually
-    defined. The exception is that pb_mod is still constructed and
-    non-staggered variables are not defined at psurf. This can only
-    be fixed by switching to z-staggered variables.
+    """! Computes a coefficients matrix to transfer a model profile
+    onto a retrieval pressure axis.
 
     In cases where retrieval surface pressure is higher than model
     surface pressure, and in cases where retrieval top pressure is
@@ -34,26 +29,6 @@ def get_int_coefs(pb_ret, pb_mod):
     and in cases where retrieval top pressure is higher than model
     top pressure, only the parts of the model column that fall
     within the retrieval presure boundaries are sampled.
-
-    Arguments
-    ---------
-    pb_ret (:class:`array_like`)
-        Pressure boundaries of the retrieval column
-    pb_mod (:class:`array_like`)
-        Pressure boundaries of the model column
-    level_def (:class:`string`)
-        "layer_average" or "pressure_boundary" (IMPLEMENTATION IN
-        PROGRESS). Refers to the retrieval profile.
-        
-        Note 2021-09-13: Inspected code for pressure_boundary.
-        Should be correct. Interpolates linearly between two model
-        levels.
-
-
-    Returns
-    -------
-    coefs (:class:`array_like`)
-            Integration coefficient matrix. Each row sums to 1.
 
     Usage
     -----
@@ -65,6 +40,11 @@ def get_int_coefs(pb_ret, pb_mod):
                 model_profile = 1. - np.linspace(0., 1., len(pb_mod)-1)**3
                 coefs = get_int_coefs(pb_ret, pb_mod, "layer_average")
                 retrieval_profile = np.matmul(coefs, model_profile)
+
+    @param pb_ret       (:class:`array_like`) Pressure boundaries of the retrieval column
+    @param pb_mod       (:class:`array_like`) Pressure boundaries of the model column
+    @param level_def     A list of sampling heights, meaning height above ground in meters
+    @return (:class:`array_like`) Integration coefficient matrix. Each row sums to 1.
     """
 
     # This code assumes that WRF variables are constant in

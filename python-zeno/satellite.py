@@ -1,23 +1,34 @@
-"""
-CH4 tracking plugin for the ICON Community Interface (ComIn)
-
-@authors 04/2025 :: Zeno Hug, ICON Community Interface  <comin@icon-model.org>
-
-SPDX-License-Identifier: BSD-3-Clause
-
-Please see the file LICENSE in the root of the source tree for this code.
-Where software is supplied by third parties, it is indicated in the
-headers of the routines.
-"""
+##
+# @file satellite.py
+#
+# @brief Tracking any CH4 data to compare to satellite data
+#
+# @section description_satellite Description
+# Tracking any CH4 data to compare to satellite data.
+#
+# @section libraries_satellite Libraries/Modules
+# - numpy library
+# - xarray library
+# - netCDF4 library
+#   - Access to Dataset
+# - pandas library
+#   - Access to pandas.to_datetime
+# - os library
+# - datetime library
+# - scipy library
+#   - Access to scipy.spatial.KDTree
+# - get_int_coefs module (local)
+#
+# @section author_satellite Author(s)
+# - Created by Zeno Hug on 05/23/2025.
+#
+# Copyright (c) 2025 Empa.  All rights reserved.
 
 import numpy as np
 import xarray as xr
-from mpi4py import MPI
 import pandas as pd
-import sys
+from netCDF4 import Dataset
 from scipy.spatial import KDTree
-# from shapely.geometry import Polygon
-# from shapely.strtree import STRtree
 import datetime as datetimelib
 from get_int_coefs import *
 import os
@@ -25,32 +36,45 @@ import os
 ## Constants:
 Mda, MCH4 = 28.964, 16.04
 
+def datetime_to_milliseconds_since_reference(arr, reference_str="2019-01-01T11:14:35.629"):
+    """! Converts datetime 64 to milliseconds since a reference time.
+    @param arr              An array of type datetime 64  to convert
+    @param reference_str    Reference time in string format
+    @return  The converted array
+    """
+    reference = np.datetime64(reference_str, 'ms')
+    
+    # Ensure array is datetime64[ms] for correct subtraction
+    arr = np.asarray(arr).astype('datetime64[ms]')
+    delta = arr - reference
+    return delta.astype('timedelta64[ms]').astype('uint64')
+
+
 def lonlat2xyz(lon, lat):
-    """Short helper function for calculating xyz coordinates from longitues and latitudes"""
+    """! Short helper function for calculating xyz coordinates from longitues and latitudes
+    @param lon   An array or single value of longitudes to convert to xyz coordinates
+    @param lat   An array or single value of latitudes to convert to xyz coordinates
+    @return  converted xyz values as a tuple
+    """
     clat = np.cos(lat) 
     return clat * np.cos(lon), clat * np.sin(lon), np.sin(lat)
 
-# # This was a helper function for a polygon based tropomi observation
-# def map_tropomi_to_icon(tropomi_lon_corners, tropomi_lat_corners, tree, index_map):
-#     try:
-#         tropomi_poly = Polygon(zip(tropomi_lon_corners, tropomi_lat_corners))
-#     except Exception as e:
-#         return []
-
-#     matches = tree.query(tropomi_poly)
-#     matched_cells = []
-
-#     for poly in matches:
-#         if tropomi_poly.intersects(poly):
-#             icon_idx = index_map[id(poly)]
-#             jc, jb = jcjb_np[icon_idx]
-#             matched_cells.append((jc, jb))
-
-#     return matched_cells
-
 
 def find_stations_satellite(lons, lats, timesteps, tree, decomp_domain, clon, pavg0_sat, pw_sat, ak_sat, qa0_sat, cams_tree):
-    """Find the local monitoring points that should be read out on a single timestep on each PE in the own domain and return all of the relevant data needed for computation"""
+    """! Find the satellite observation points on each PE in the own domain and return all of the relevant data needed for computation. All lists need to have the same length
+    @param lons                 A list of longitudes of points to locate
+    @param lats                 A list of latitudes of points to locate
+    @param timesteps            A list of timesteps at which the measurements have been taken of the points needed to be located
+    @param tree                 A tree with the cells in them that you can query
+    @param decomp_domain        Array with information about which cells are in this PE's prognostic area
+    @param clon                 Array with the cell longitudes
+    @param pavg0_sat            A list of the pavg0 values of points to locate
+    @param pw_sat               A list of the pw values of points to locate
+    @param ak_sat               A list of the ak values of points to locate
+    @param qa0_sat              A list of the qa0 values of points to locate
+    @param cams_tree            A tree with the cells of the cams data in them that you can query
+    @return  All of the relevant data of the points found in this PE's prognostic area: jb_loc, jc_loc, lon, lat, timesteps, pavg0, pw, ak, qa0, cams_indicesm fracs_cams
+    """
     # Define all lists as empty
     jc_locs = []
     jb_locs = []
@@ -93,7 +117,6 @@ def find_stations_satellite(lons, lats, timesteps, tree, decomp_domain, clon, pa
             cams_indices_local.append(cams_index)
             fracs_cams_local.append(frac_cams)
 
-
     # Return all data as numpy arrays
     return (np.array(jc_locs, dtype = np.int32),
             np.array(jb_locs, dtype = np.int32),
@@ -108,9 +131,12 @@ def find_stations_satellite(lons, lats, timesteps, tree, decomp_domain, clon, pa
             np.array(fracs_cams_local, dtype = np.float64))
 
 
-def write_satellite(datetime, comm, done_data):
-    """Function to writeout the single timepoint data"""
-
+def write_satellite(comm, done_data, file_name_output):
+    """!Function to write satellite data to output nc file using preallocated arrays with a counter.
+    @param comm                 MPI communicator containing all working PE's
+    @param data_done            Dictionary with the data that is done
+    @param file_name_output     Filename of the output nc file. Expects the header of the nc file to be written already
+    """
     done_data_local = None
     done_counter = done_data['counter']
     # Collect the local point data, that we want to write out
@@ -118,7 +144,7 @@ def write_satellite(datetime, comm, done_data):
         done_data_local = {
             "lon": done_data['lon'][:done_counter],
             "lat": done_data['lat'][:done_counter],
-            "timepoint": done_data['timestep'][:done_counter],
+            "date": done_data['timestep'][:done_counter],
             "CH4": done_data['CH4'][:done_counter],
         }
 
@@ -130,7 +156,7 @@ def write_satellite(datetime, comm, done_data):
         final_data = {
             "lon": [],
             "lat": [],
-            "timepoint": [],
+            "date": [],
             "CH4": [],
         }
         # Flatten the data and put them into one single list
@@ -143,34 +169,46 @@ def write_satellite(datetime, comm, done_data):
         if any(len(lst) > 0 for lst in final_data.values()):
             for key in final_data:
                 final_data[key] = np.concatenate(final_data[key])
+            sort_indices = np.argsort(final_data["date"])
+            for key in final_data:
+                final_data[key] = final_data[key][sort_indices]
+            ncfile = Dataset(file_name_output, 'a')
+            obs_index = ncfile.variables['lon'].shape[0]
+            new_points = final_data['lon'].shape[0]
+
+            final_data['date'] = datetime_to_milliseconds_since_reference(final_data['date'])
+
+            for var_name, data in final_data.items():
+                    ncfile.variables[var_name][obs_index: obs_index + new_points] = data
             
-            df = pd.DataFrame(final_data)
-            df = df.sort_values(by="timepoint") # Sort because they could be unsorted because of the gathering
-
-            # Csv filename
-            csv_file = "satellite_data" + ".csv"
-
-            # Write to csv, write the header only if the file does not yet exist         
-            file_exists = os.path.isfile(csv_file)
-            df.to_csv(csv_file, mode='a', header=not file_exists, index=False)
+            # Write out the data
+            ncfile.close()
             
     done_data['counter'] = 0 # Reset the done counter
 
-def read_in_satellite_data(datetime, comm, tree, decomp_domain, clon, start_model, tropomi_filename, cams_base_path, cams_params_file):
-    """function to read in the satellite data for the whole year"""
+def read_in_satellite_data(comm, tree, decomp_domain, clon, start_model, end_model, tropomi_filename, cams_base_path, cams_params_file):
+    """! Read in the satellite measurement points on each PE in the own domain and return all of the relevant data needed for computation as dictionaries
+    @param comm                 MPI communicator containing all working PE's
+    @param tree                 A tree with the cells in them that you can query
+    @param decomp_domain        Array with information about which cells are in this PE's prognostic area
+    @param clon                 Array with the cell longitudes
+    @param tropomi_filename     Path to the tropomi nc file
+    @param cams_base_path       Base path of the CAMS data
+    @param cams_params_file     path to the CAMS parameter file
+    @param start_model          datetime object depicting the start datetime of the experiment
+    @param end_model            datetime object depicting the end datetime of the experiment
+    @return  Tuple of dicts that symbolize the data to do, the data done and the cams files dict
+    """
     cams_files_dict = {} # Dictionary for the cams file names
-    start = pd.to_datetime(datetime)
-    end = datetimelib.datetime(2020, 1, 30, 0)
 
-    dt = start
-    while dt < end:
+    # Create the dictionary for the cams file names
+    dt = start_model.replace(hour=(start_model.hour // 6))
+    while dt < end_model:
         dt_str = dt.strftime("%Y%m%d%H")
         fname = f"cams73_v22r2_ch4_conc_surface_inst_{dt_str}_lbc.nc"
         full_path = os.path.join(cams_base_path, fname)
         cams_files_dict[dt] = full_path
         dt += datetimelib.timedelta(hours=6)
-
-    # cams_times_sorted = sorted(cams_files_dict.keys())
 
     if comm.Get_rank() == 0:
         tropomi_ds = xr.open_dataset(tropomi_filename)
@@ -184,8 +222,8 @@ def read_in_satellite_data(datetime, comm, tree, decomp_domain, clon, start_mode
         pw_sat = tropomi_ds['pw'].values
         obs_time_dts = pd.to_datetime(times_sat)
         
-        # Only keep the points, where the time is later (or equal) than now
-        valid_mask = obs_time_dts >= start_model
+        # Only keep the points, where the time is between the starting and ending time
+        valid_mask = (obs_time_dts >= start_model) & (obs_time_dts <= end_model)
         satellite_lons = satellite_lons[valid_mask]
         satellite_lats = satellite_lats[valid_mask]
         pavg0_sat = pavg0_sat[valid_mask]
@@ -194,8 +232,8 @@ def read_in_satellite_data(datetime, comm, tree, decomp_domain, clon, start_mode
         qa0_sat = qa0_sat[valid_mask]
         obs_time_dts = obs_time_dts[valid_mask]
 
-        # Load one example CAMS file, for computing the correct CAMS index
-        cams_example_time = start.replace(hour=(start.hour // 6) * 6, minute=0, second=0, microsecond=0)
+        # Load one example CAMS file, for computing the correct CAMS indices
+        cams_example_time = start_model.replace(hour=(start_model.hour // 6) * 6, minute=0, second=0, microsecond=0)
         example_file = cams_files_dict[cams_example_time]
         cams_ds = xr.open_dataset(example_file)
         cams_clon = np.asarray(cams_ds["clon"])
@@ -229,19 +267,19 @@ def read_in_satellite_data(datetime, comm, tree, decomp_domain, clon, start_mode
         hybi = None
 
     # Broadcast the data to all processes, from root 0
-    satellite_lons = comm.bcast(satellite_lons, root=0)
-    satellite_lats = comm.bcast(satellite_lats, root=0)
-    obs_time_dts = comm.bcast(obs_time_dts, root=0)
-    pavg0_sat = comm.bcast(pavg0_sat, root=0)
-    pw_sat = comm.bcast(pw_sat, root=0)
-    ak_sat = comm.bcast(ak_sat, root=0)
-    qa0_sat = comm.bcast(qa0_sat, root=0)
-    cams_clat = comm.bcast(cams_clat, root=0)
-    cams_clon = comm.bcast(cams_clon, root=0)
-    hyam = comm.bcast(hyam, root=0)
-    hybm = comm.bcast(hybm, root=0)
-    hyai = comm.bcast(hyai, root=0)
-    hybi = comm.bcast(hybi, root=0)
+    satellite_lons = comm.bcast(satellite_lons, root = 0)
+    satellite_lats = comm.bcast(satellite_lats, root = 0)
+    obs_time_dts = comm.bcast(obs_time_dts, root = 0)
+    pavg0_sat = comm.bcast(pavg0_sat, root = 0)
+    pw_sat = comm.bcast(pw_sat, root = 0)
+    ak_sat = comm.bcast(ak_sat, root = 0)
+    qa0_sat = comm.bcast(qa0_sat, root = 0)
+    cams_clat = comm.bcast(cams_clat, root = 0)
+    cams_clon = comm.bcast(cams_clon, root = 0)
+    hyam = comm.bcast(hyam, root = 0)
+    hybm = comm.bcast(hybm, root = 0)
+    hyai = comm.bcast(hyai, root = 0)
+    hybi = comm.bcast(hybi, root = 0)
 
     # Create the cams tree for searching later
     cams_xyz = np.c_[lonlat2xyz(cams_clon, cams_clat)]
@@ -271,7 +309,13 @@ def read_in_satellite_data(datetime, comm, tree, decomp_domain, clon, start_mode
 
 
 def update_cams(datetime, cams_files_dict, cams_prev_data=None, cams_next_data=None):
-    """Short function to update the current cams data, needs to be updated every 6 hours at 0, 6, 12 and 18"""
+    """! Short function to update the current cams data, needs to be updated every 6 hours at 0, 6, 12 and 18
+    @param datetime         Current datetime
+    @param cams_file_dict   The dictionary with the CAMS file names
+    @param cams_prev_data   prev data from before, will be closed
+    @param cams_next_data   next data from before, will be closed
+    @return Tuple of the updated CAMS data; Shape: prev_data, next_data
+    """
     cams_prev_time = pd.to_datetime(datetime)
     cams_next_time = cams_prev_time + datetimelib.timedelta(hours=6)
     if cams_prev_data is not None:
@@ -283,8 +327,18 @@ def update_cams(datetime, cams_files_dict, cams_prev_data=None, cams_next_data=N
     return cams_prev_data, cams_next_data
 
 
-def tracking_CH4_satellite(datetime, comm, CH4_EMIS_np, CH4_BG_np, pres_ifc_np, pres_np, data_to_do, data_done, cams_prev_data, cams_next_data):
-    """Function to track the satellite CH4"""
+def tracking_CH4_satellite(datetime, CH4_EMIS_np, CH4_BG_np, pres_ifc_np, pres_np, data_to_do, data_done, cams_prev_data, cams_next_data):
+    """! Track the CH4 of the satellite measurements. Move data that is done being measured to the data_done dictionary
+    @param datetime             Current datetime (np.datetime object)
+    @param data_to_do           The dictionary with the data that needs to be done
+    @param data_done            The dictionary with the data that is done
+    @param CH4_EMIS_np          Numpy array with the current CH4 EMIS
+    @param CH4_BG_np            Numpy array with the current CH4 BG
+    @param pres_ifc_np          Numpy array with the current pressures on the interfaces (so the half levels)
+    @param pres_np              Numpy array with the current pressures
+    @param cams_prev_data       Xarray dataset, with the current CAMS previous data
+    @param cams_next_data       Xarray dataset, with the current CAMS next data
+    """
     if data_to_do['timestep'].size > 0: # Checks if there is still work to do
 
         model_time_np = np.datetime64(datetime)
@@ -337,7 +391,7 @@ def tracking_CH4_satellite(datetime, comm, CH4_EMIS_np, CH4_BG_np, pres_ifc_np, 
             )
             ICON_profile = np.squeeze(ICON_profile)
             
-            
+            # Linearly interpolate the CAMS data to the current timestep, as CAMS data is only every 6 hours
             CAMS_obs = (1. - frac_cams_ready) * CAMS_obs_prev + frac_cams_ready * CAMS_obs_next
 
             ## The following code takes the ICON data and extends it by the CAMS data, as the ICON data does not go to very low pressures
@@ -376,7 +430,7 @@ def tracking_CH4_satellite(datetime, comm, CH4_EMIS_np, CH4_BG_np, pres_ifc_np, 
             ], dtype=object)
 
             # Now as we get to the get coef funciton we need to turn around all of the data to: from surface to TOA
-            # Also this computation is based on Michael Steiners computation
+            # Also the computation afterwards is based on Michael Steiners computation
             pb_ret = data_to_do['pavg0'][ready_mask]
             coef_matrix = []
             pb_ret = pb_ret[:, ::-1]
