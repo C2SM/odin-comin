@@ -435,14 +435,6 @@ def tracking_points(datetime, data_to_do, data_done, data_np, dict_vars, operati
             keep_mask = ~done_mask
 
             # Filter the entrys in the dictionary and only keep the points that aren't done yet
-            for key, array in data_to_do.items():
-                array = array[keep_mask]
-
-            # keys = ['lon', 'lat','elevation', 'sampling_height', 'sampling_strategy', 'jc_loc', 'jb_loc', 'vertical_index1', 'vertical_index2', 'vertical_weight', 'horizontal_weight', 'id', 'stime', 'etime', 'number_of_steps']
-            # # Filter the entrys in the dictionary and only keep the points that aren't done yet
-            # for key in keys:
-            #     data_to_do[key] = data_to_do[key][keep_mask]
-
-            # for variable in dict_vars:
-            #     data_to_do[variable] = data_to_do[variable][keep_mask]
+            for key in data_to_do:
+                data_to_do[key] = data_to_do[key][keep_mask]
         

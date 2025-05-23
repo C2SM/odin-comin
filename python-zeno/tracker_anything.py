@@ -170,10 +170,12 @@ def stations_init():
     datetime_np = pd.to_datetime(datetime)
 
     simulation_interval = comin.descrdata_get_simulation_interval()
-    exp_start = simulation_interval.exp_start 
-    exp_stop = simulation_interval.exp_stop
-    exp_start = pd.to_datetime(exp_start)
-    exp_stop = pd.to_datetime(exp_stop)
+    # exp_start = simulation_interval.exp_start 
+    # exp_stop = simulation_interval.exp_stop
+    # exp_start = pd.to_datetime(exp_start)
+    # exp_stop = pd.to_datetime(exp_stop)
+    run_start = pd.to_datetime(simulation_interval.run_start)
+    run_stop = pd.to_datetime(simulation_interval.run_stop)
     # All arrays are for domain 1 only
     # We read in all of the domain data we need. We read it in only once and then save it as a global variable
     domain = comin.descrdata_get_domain(jg)
@@ -188,9 +190,11 @@ def stations_init():
 
     # Get all of the monitoring stations and save all of the relevant data
     if(do_monitoring_stations):
-        data_monitoring_stations_to_do, data_monitoring_stations_done = read_in_points(comm, tree, decomp_domain, clon, hhl, NUMBER_OF_NN, path_to_input_nc, exp_start, exp_stop, data)
+        data_monitoring_stations_to_do, data_monitoring_stations_done = read_in_points(comm, tree, decomp_domain, clon, hhl, NUMBER_OF_NN, path_to_input_nc, run_start, run_stop, data)
+        # data_monitoring_stations_to_do, data_monitoring_stations_done = read_in_points(comm, tree, decomp_domain, clon, hhl, NUMBER_OF_NN, path_to_input_nc, exp_start, exp_stop, data)
     if(do_satellite):
-        data_satellite_to_do, data_satellite_done, cams_files_dict = read_in_satellite_data(comm, tree, decomp_domain, clon, exp_start, exp_stop, tropomi_filename, cams_base_path, cams_params_file)
+        data_satellite_to_do, data_satellite_done, cams_files_dict = read_in_satellite_data(comm, tree, decomp_domain, clon, run_start, run_stop, tropomi_filename, cams_base_path, cams_params_file)
+        # data_satellite_to_do, data_satellite_done, cams_files_dict = read_in_satellite_data(comm, tree, decomp_domain, clon, exp_start, exp_stop, tropomi_filename, cams_base_path, cams_params_file)
     if(comm.Get_rank() == 0):
 
         # Append all of the variables we want to measure to the output nc file. This assumes that the rest of the header of the nc file is already written
