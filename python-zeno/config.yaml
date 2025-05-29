@@ -1,0 +1,51 @@
+NUMBER_OF_NN: 4
+time_interval_writeout: 3600
+jg: 1
+msgrank: 0
+
+dict_vars:
+  CH4:
+    var_names: ["CH4_EMIS", "CH4_BG"]
+    signs: ["plus"]
+    factor: [1.0e9, 1.0]
+    unit: "ppb"
+    long_name: "CH4 concentration"
+  Temp:
+    var_names: ["temp"]
+    signs: []
+    factor: [1]
+    unit: "Kelvin"
+    long_name: "Temperature"
+
+dict_vars_cif_sat:
+  CH4:
+    var_names: ["CH4_EMIS", "CH4_BG"]
+    signs: ["plus"]
+    factor: [1.0e9, 1.0]
+    unit: "ppb"
+    long_name: "CH4 concentration"
+
+dict_vars_cif_stations:
+  CH4:
+    var_names: ["CH4_EMIS", "CH4_BG"]
+    signs: ["plus"]
+    factor: [1.0e9, 1.0]
+    unit: "ppb"
+    long_name: "CH4 concentration"
+
+do_monitoring_stations: false
+do_satellite: false
+do_satellite_cif: true
+do_stations_cif: false
+
+plugin_dir: "/capstor/scratch/cscs/zhug/Romania6km/python-zeno"
+tropomi_filename: "TROPOMI_SRON_prs_flipped_20190101_20191231.nc"
+cams_base_path: "/capstor/scratch/cscs/zhug/Romania6km/input/CAMS/LBC/"
+cams_params_file: "/capstor/scratch/cscs/zhug/Romania6km/input/CAMS/cams73_v22r2_ch4_conc_surface_inst_201910.nc"
+path_to_input_nc: "/capstor/scratch/cscs/zhug/Romania6km/input/empty_output_file/input.nc"
+path_to_input_sat_cif: "/capstor/scratch/cscs/zhug/Romania6km/input/cif/sat.csv"
+path_to_input_stations_cif: "/capstor/scratch/cscs/zhug/Romania6km/input/cif/stations.csv"
+file_name_output_sat_cif: "output_sat_cif.nc"
+file_name_output_stations_cif: "output_stations_cif.nc"
+file_name_output: "output.nc"
+file_name_output_sat: "output_sat.nc"

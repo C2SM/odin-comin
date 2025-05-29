@@ -26,7 +26,7 @@ export ECCODES_DEFINITION_PATH=/capstor/scratch/cscs/msteiner/spack-c2sm-eiger/s
 export LD_LIBRARY_PATH=/opt/cray/libfabric/1.15.2.0/lib64/:$LD_LIBRARY_PATH
 
 
-# date=2019100400
+# date=2019100700
 date=2019010100
 
 #basic folders
@@ -105,7 +105,7 @@ cat > icon_master.namelist << EOF
 &time_nml
  ! dt_restart                  =      604800
  ini_datetime_string         =      "2019-01-01T00:00:00Z"        ! initial date and time of the simulation
- end_datetime_string         =      "2020-01-01T00:00:00Z"        ! end date and time of the simulation
+ end_datetime_string         =      "2019-02-01T00:00:00Z"        ! end date and time of the simulation
 /
 EOF
 
@@ -480,7 +480,8 @@ EOF
 cp /capstor/scratch/cscs/zhug/Romania6km/input/TROPOMI/TROPOMI_SRON_prs_flipped_20190101_20191231.nc /capstor/scratch/cscs/zhug/Romania6km/simulation_outer_domain/
 cp /capstor/scratch/cscs/zhug/Romania6km/input/empty_output_file/output.nc /capstor/scratch/cscs/zhug/Romania6km/simulation_outer_domain/
 
-cp -p  /capstor/scratch/cscs/zhug/spack/opt/spack/linux-sles15-zen2/gcc-13.3.0/icon-icon-2024.10-dwd-3.0-7i2y5rw27gqzolhlv3lcmtfxelcpdysc/bin/icon icon.exe
+# cp -p  /capstor/scratch/cscs/zhug/spack/opt/spack/linux-sles15-zen2/gcc-13.3.0/icon-icon-2024.10-dwd-3.0-7i2y5rw27gqzolhlv3lcmtfxelcpdysc/bin/icon icon.exe
+cp -p /capstor/scratch/cscs/zhug/Romania6km/iconzhug icon.exe
 
 # Load the needed libraries
 # spack load py-numpy
@@ -489,5 +490,7 @@ spack load py-xarray
 # spack load py-pandas
 spack load py-mpi4py
 spack load py-netcdf4
+spack load py-pyyaml
+spack load py-scikit-learn
 
 srun ./icon.exe

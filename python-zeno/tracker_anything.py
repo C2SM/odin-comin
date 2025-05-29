@@ -50,43 +50,56 @@ import pandas as pd
 import sys
 import operator
 from scipy.spatial import KDTree
+from sklearn.neighbors import BallTree
 from netCDF4 import Dataset
+import yaml
 import datetime as datetimelib
 
-# Manually specify the plugin directory
-plugin_dir = "/capstor/scratch/cscs/zhug/Romania6km/python-zeno"
+# Load config
+with open('/capstor/scratch/cscs/zhug/Romania6km/python-zeno/config.yaml', 'r') as file:
+    config = yaml.safe_load(file)
+
+# Ensure all factor values are float
+for var, spec in config['dict_vars'].items():
+    spec['factor'] = [float(f) for f in spec['factor']]
+
+    # Ensure all factor values are float
+for var, spec in config['dict_vars_cif_sat'].items():
+    spec['factor'] = [float(f) for f in spec['factor']]
+
+# Ensure all factor values are float
+for var, spec in config['dict_vars_cif_stations'].items():
+    spec['factor'] = [float(f) for f in spec['factor']]
+
+## Global Constants:
+NUMBER_OF_NN = config['NUMBER_OF_NN']
+time_interval_writeout = config['time_interval_writeout']
+jg = config['jg']
+msgrank = config['msgrank']
+dict_vars = config['dict_vars']
+dict_vars_cif_sat = config['dict_vars_cif_sat']
+dict_vars_cif_stations = config['dict_vars_cif_stations']
+do_monitoring_stations = config['do_monitoring_stations']
+do_satellite = config['do_satellite']
+do_satellite_cif = config['do_satellite_cif']
+do_stations_cif = config['do_stations_cif']
+tropomi_filename = config['tropomi_filename']
+cams_base_path = config['cams_base_path']
+cams_params_file = config['cams_params_file']
+path_to_input_nc = config['path_to_input_nc']
+path_to_input_sat_cif = config['path_to_input_sat_cif']
+path_to_input_stations_cif = config['path_to_input_stations_cif']
+file_name_output_stations_cif = config['file_name_output_stations_cif']
+file_name_output_sat_cif = config['file_name_output_sat_cif']
+file_name_output = config['file_name_output']
+file_name_output_sat = config['file_name_output_sat']
+
+plugin_dir = config['plugin_dir']
 if plugin_dir not in sys.path:
     sys.path.append(plugin_dir)
 
 from satellite import *
 from monitoring_stations_final import *
-
-## Global Constants:
-NUMBER_OF_NN = 4 # Number of nearest neighbour cells over which should be interpolated
-time_interval_writeout = 3600 # variable saying how often you want to writeout the results, in seconds
-jg = 1 # we do computations only on domain 1, as in our case our grid only has one domain
-msgrank = 0 # Rank that prints messages
-dict_vars = {   'CH4': {   'var_names': ['CH4_EMIS', 'CH4_BG'],
-                            'signs': ['plus'],
-                            'factor': [1e9, 1], 
-                            'unit': 'ppb', 
-                            'long_name': 'CH4 concentration'
-                        }, 
-                'Temp': {   'var_names': ['temp'],
-                            'signs': [],
-                            'factor': [1], 
-                            'unit': 'Kelvin', 
-                            'long_name': 'Temperature'
-                        }
-            }
-do_monitoring_stations = True
-do_satellite = True
-tropomi_filename = "TROPOMI_SRON_prs_flipped_20190101_20191231.nc"
-cams_base_path = "/capstor/scratch/cscs/zhug/Romania6km/input/CAMS/LBC/"
-cams_params_file = "/capstor/scratch/cscs/zhug/Romania6km/input/CAMS/cams73_v22r2_ch4_conc_surface_inst_201910.nc"
-path_to_input_nc = "/capstor/scratch/cscs/zhug/Romania6km/input/full_stations/input.nc"
-file_name_output = "output.nc"
-file_name_output_sat = "output_sat.nc"
 
 ## Defining variables:
 operations_dict = {
@@ -120,7 +133,7 @@ def lonlat2xyz(lon, lat):
 def data_constructor():
     """! Constructor: Get pointers to data
     """
-    global pres, pres_ifc, data, dict_vars, data, CH4_emis, CH4_bg
+    global pres, pres_ifc, data, dict_vars, data, CH4_emis, CH4_bg, data_sat_cif, data_stations_cif
     entry_points = [comin.EP_ATM_TIMELOOP_END]
     
     if do_monitoring_stations:
@@ -143,9 +156,40 @@ def data_constructor():
         # Request to get the wanted variables (i.e. the EMIS and the BG. Also the pressure). We only want to read the data, not write
         CH4_emis = comin.var_get(entry_points, ("CH4_EMIS", jg), comin.COMIN_FLAG_READ)
         CH4_bg = comin.var_get(entry_points, ("CH4_BG", jg), comin.COMIN_FLAG_READ)
-        pres = comin.var_get(entry_points, ("pres", jg), comin.COMIN_FLAG_READ)
         pres_ifc = comin.var_get(entry_points, ("pres_ifc", jg), comin.COMIN_FLAG_READ)
+    if do_satellite or do_satellite_cif:
+        pres = comin.var_get(entry_points, ("pres", jg), comin.COMIN_FLAG_READ)
 
+    if do_satellite_cif:
+        data_sat_cif = {}
+        for variable, parameters in dict_vars_cif_sat.copy().items():
+            message(f"Now working on variable {variable}", msgrank)
+            # Check if there is the right amount of entries. Could also do more checks here
+            if len(parameters['signs']) != len(parameters['var_names']) - 1 or len(parameters['factor']) != len(parameters['var_names']):
+                message(f"   Please provide the right amount of variables, signs and factors, will skip {variable}", msgrank)
+                del dict_vars[variable]
+            local_data = []
+            for var_name in parameters['var_names']:
+                message(f"  Now trying to access {var_name} in ComIn. If it crashes after this you misspelled this or this variable doesn't exist in ICON. Please double check", msgrank)
+                # Request to get the wanted variables. We only want to read the data, not write
+                local_data.append(comin.var_get(entry_points, (var_name, jg), comin.COMIN_FLAG_READ))
+            data_sat_cif[variable] = local_data
+    
+    if do_stations_cif:
+        data_stations_cif = {}
+        for variable, parameters in dict_vars_cif_stations.copy().items():
+            message(f"Now working on variable {variable}", msgrank)
+            # Check if there is the right amount of entries. Could also do more checks here
+            if len(parameters['signs']) != len(parameters['var_names']) - 1 or len(parameters['factor']) != len(parameters['var_names']):
+                message(f"   Please provide the right amount of variables, signs and factors, will skip {variable}", msgrank)
+                del dict_vars[variable]
+            local_data = []
+            for var_name in parameters['var_names']:
+                message(f"  Now trying to access {var_name} in ComIn. If it crashes after this you misspelled this or this variable doesn't exist in ICON. Please double check", msgrank)
+                # Request to get the wanted variables. We only want to read the data, not write
+                local_data.append(comin.var_get(entry_points, (var_name, jg), comin.COMIN_FLAG_READ))
+            data_stations_cif[variable] = local_data
+    
     message("data_constructor successful", msgrank)
 
 @comin.register_callback(comin.EP_ATM_INIT_FINALIZE)
@@ -154,7 +198,8 @@ def stations_init():
     """
     global number_of_timesteps, clon, hhl, decomp_domain, tree # variables with domain info, and general information
     # All of the monitoring variables
-    global cams_files_dict, data, data_satellite_to_do, data_satellite_done, data_monitoring_stations_to_do, data_monitoring_stations_done, dict_vars
+    global cams_files_dict, data, data_satellite_to_do, data_satellite_done, data_monitoring_stations_to_do, data_monitoring_stations_done, dict_vars, data_sat_cif_to_do, data_sat_cif_done, data_stations_cif_to_do, data_stations_cif_done
+    global dict_vars_cif_sat, dict_vars_cif_stations
     # MPI variables
     global comm
 
@@ -186,37 +231,31 @@ def stations_init():
 
     # Convert the longitude latitude data to xyz data for the KDTree
     xyz = np.c_[lonlat2xyz(clon.ravel(),clat.ravel())]
-    tree = KDTree(xyz) # Create the KDTree, composed of the xyz data
+    # tree = KDTree(xyz) # Create the KDTree, composed of the xyz data
+
+    coords_rad = np.deg2rad(np.c_[clat.ravel(), clon.ravel()])
+    tree = BallTree(coords_rad, metric='haversine')
 
     # Get all of the monitoring stations and save all of the relevant data
     if(do_monitoring_stations):
+        message("Now reading in and locating the correct indices for the monitoring stations", msgrank)
         data_monitoring_stations_to_do, data_monitoring_stations_done = read_in_points(comm, tree, decomp_domain, clon, hhl, NUMBER_OF_NN, path_to_input_nc, run_start, run_stop, data)
-        # data_monitoring_stations_to_do, data_monitoring_stations_done = read_in_points(comm, tree, decomp_domain, clon, hhl, NUMBER_OF_NN, path_to_input_nc, exp_start, exp_stop, data)
+        write_header_points(comm, file_name_output, dict_vars)
+
     if(do_satellite):
+        message("Now reading in and locating the correct indices for the satellite data", msgrank)
         data_satellite_to_do, data_satellite_done, cams_files_dict = read_in_satellite_data(comm, tree, decomp_domain, clon, run_start, run_stop, tropomi_filename, cams_base_path, cams_params_file)
-        # data_satellite_to_do, data_satellite_done, cams_files_dict = read_in_satellite_data(comm, tree, decomp_domain, clon, exp_start, exp_stop, tropomi_filename, cams_base_path, cams_params_file)
-    if(comm.Get_rank() == 0):
+        write_header_sat(comm, file_name_output_sat)
 
-        # Append all of the variables we want to measure to the output nc file. This assumes that the rest of the header of the nc file is already written
-        if do_monitoring_stations:
-            for variable, parameters in dict_vars.items():
-                ncfile = Dataset(file_name_output, 'a')
-                temp_var = ncfile.createVariable(variable, 'f8', ('obs',))
-                temp_var.units = parameters['unit']
-                temp_var.long_name = parameters['long_name']
-                ncfile.close()
-
-        # Create the header for the satellite data, it is the in the same format as the tropomi data
-        if do_satellite:
-            ncfile_sat = Dataset(file_name_output_sat, 'w', format='NETCDF4')
-            index = ncfile_sat.createDimension('index', None)
-            date = ncfile_sat.createVariable('date', 'u8',('index',) )
-            date.units = "milliseconds since 2019-01-01 11:14:35.629000" 
-            date.calendar = "proleptic_gregorian"
-            lon = ncfile_sat.createVariable('lon', 'f8',('index',) )
-            lat = ncfile_sat.createVariable('lat', 'f8',('index',) )
-            ch4 = ncfile_sat.createVariable('CH4', 'f8',('index',) )
-            ncfile_sat.close()
+    if(do_satellite_cif):
+        message("Now reading in and locating the correct indices for the cif satellite data", msgrank)
+        data_sat_cif_to_do, data_sat_cif_done = read_in_satellite_data_cif(comm, tree, decomp_domain, clon, run_start, run_stop, path_to_input_sat_cif, NUMBER_OF_NN)
+        write_header_sat_cif(comm, dict_vars_cif_sat, file_name_output_sat_cif)
+    if(do_stations_cif):
+        message("Now reading in and locating the correct indices for the cif station data", msgrank)
+        data_stations_cif_to_do, data_stations_cif_done = read_in_points_cif(comm, tree, decomp_domain, clon, hhl, NUMBER_OF_NN,path_to_input_stations_cif, run_start, run_stop, dict_vars_cif_stations)
+        write_header_points(comm, file_name_output_stations_cif, dict_vars_cif_stations)
+    message("Done reading in all data", msgrank)
 
 
 @comin.register_callback(comin.EP_ATM_TIMELOOP_START)
@@ -239,9 +278,9 @@ def tracking():
     """! Tracking: Track the data and writeout the done data in intervals
     """
     # general info
-    global number_of_timesteps, data, dict_vars, operations_dict
+    global number_of_timesteps, data, dict_vars, operations_dict, dict_vars_cif_stations, dict_vars_cif_sat, data_sat_cif, data_stations_cif
     # satellite and point data
-    global data_satellite_to_do, data_satellite_done, data_monitoring_stations_done, data_monitoring_stations_to_do
+    global data_satellite_to_do, data_satellite_done, data_monitoring_stations_done, data_monitoring_stations_to_do, data_sat_cif_to_do, data_sat_cif_done, data_stations_cif_to_do, data_stations_cif_done
 
     dtime = comin.descrdata_get_timesteplength(jg) # size of every timestep 
     datetime = comin.current_get_datetime() # get datetime info. example for format: 2019-01-01T00:01:00.000
@@ -262,11 +301,57 @@ def tracking():
         pres_np = np.asarray(pres)
         pres_ifc_np = np.asarray(pres_ifc)
 
+    if do_satellite_cif:
+        pres_np = np.asarray(pres)
+        data_np_sat_cif = {}
+        for variable, list in data_sat_cif.items():
+            local_data = []
+            for item in list:
+                local_data.append(np.asarray(item))
+            data_np_sat_cif[variable] = local_data
+
+    if do_stations_cif:
+        data_np_stations_cif = {}
+        for variable, list in data_stations_cif.items():
+            local_data = []
+            for item in list:
+                local_data.append(np.asarray(item))
+            data_np_stations_cif[variable] = local_data
+
     # Monitoring of the variables for the different problems
     if do_monitoring_stations:
+
+
+        # RANK:  22  JC LOC:  [12 13 11 12]  JB LOC:  [14 13 14 13]
+        # RANK:  64  JC LOC:  [2 7 1 5]  JB LOC:  [14 15 14 13]
+        # RANK:  65  JC LOC:  [ 4 11 12 13]  JB LOC:  [14 13 14 11]
+        # RANK:  68  JC LOC:  [ 7  6 15 15]  JB LOC:  [12 12  9 13]
+
+
+        # if comm.Get_rank() == 22:
+        #     print(" RANK ", comm.Get_rank(), " has CH4 EMIS column on same index: ", CH4_EMIS_np[12, : , 14, 0, 0], file=sys.stderr)
+        # if comm.Get_rank() == 64:
+        #     print(" RANK ", comm.Get_rank(), " has CH4 EMIS column on same index: ", CH4_EMIS_np[12, : , 14, 0, 0], file=sys.stderr)
+        # if comm.Get_rank() == 65:
+        #     print(" RANK ", comm.Get_rank(), " has CH4 EMIS column on same index: ", CH4_EMIS_np[12, : , 14, 0, 0], file=sys.stderr)
+        # if comm.Get_rank() == 68:
+        #     print(" RANK ", comm.Get_rank(), " has CH4 EMIS column on same index: ", CH4_EMIS_np[12, : , 14, 0, 0], file=sys.stderr)
+        # if comm.Get_rank() == 22:
+        #     print(" RANK ", comm.Get_rank(), " has CH4 EMIS column on same result: ", CH4_EMIS_np[12, : , 14, 0, 0], file=sys.stderr)
+        # if comm.Get_rank() == 64:
+        #     print(" RANK ", comm.Get_rank(), " has CH4 EMIS column on same result: ", CH4_EMIS_np[2, : , 14, 0, 0], file=sys.stderr)
+        # if comm.Get_rank() == 65:
+        #     print(" RANK ", comm.Get_rank(), " has CH4 EMIS column on same result: ", CH4_EMIS_np[4, : , 14, 0, 0], file=sys.stderr)
+        # if comm.Get_rank() == 68:
+        #     print(" RANK ", comm.Get_rank(), " has CH4 EMIS column on same result: ", CH4_EMIS_np[7, : , 12, 0, 0], file=sys.stderr)
+
         tracking_points(datetime, data_monitoring_stations_to_do, data_monitoring_stations_done, data_np, dict_vars, operations_dict)
     if do_satellite:
         tracking_CH4_satellite(datetime, CH4_EMIS_np, CH4_BG_np, pres_ifc_np, pres_np, data_satellite_to_do, data_satellite_done, cams_prev_data, cams_next_data)
+    if do_satellite_cif:
+        tracking_CH4_satellite_cif_pressures(datetime, data_sat_cif_to_do, data_sat_cif_done, data_np_sat_cif, dict_vars_cif_sat, operations_dict, pres_np)
+    if do_stations_cif:
+        tracking_points(datetime, data_stations_cif_to_do, data_stations_cif_done, data_np_stations_cif, dict_vars_cif_stations, operations_dict)
         
 
     ## Writeout
@@ -276,6 +361,10 @@ def tracking():
             write_points(comm, data_monitoring_stations_done, dict_vars, file_name_output)
         if do_satellite:
             write_satellite(comm, data_satellite_done, file_name_output_sat)
+        if do_satellite_cif:
+            write_satellite_cif(comm, data_sat_cif_done, dict_vars_cif_sat, file_name_output_sat_cif)
+        if do_stations_cif:
+            write_points(comm, data_stations_cif_done, dict_vars_cif_stations, file_name_output_stations_cif)
 
         # Reset data
         number_of_timesteps = 0

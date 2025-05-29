@@ -46,7 +46,7 @@ def lonlat2xyz(lon, lat):
     clat = np.cos(lat) 
     return clat * np.cos(lon), clat * np.sin(lon), np.sin(lat)
 
-def find_points(lons, lats, sampling_heights, sampling_elevations, sampling_strategies, tree, decomp_domain, clon, hhl, number_of_NN, ids, timesteps_begin, timesteps_end):
+def find_points(lons, lats, sampling_heights, sampling_elevations, sampling_strategies, tree, decomp_domain, clon, hhl, number_of_NN, ids, timesteps_begin, timesteps_end, comm):
     """! Find the local stationary monitoring stations on each PE in the own domain and return all of the relevant data needed for computation. All lists need to have the same length
     @param lons                 A list of longitudes of points to locate
     @param lats                 A list of latitudes of points to locate
@@ -84,6 +84,9 @@ def find_points(lons, lats, sampling_heights, sampling_elevations, sampling_stra
 
         # Query the tree for the NUMBER_OF_NN nearest cells
         dd, ii = tree.query([lonlat2xyz(np.deg2rad(lon), np.deg2rad(lat))], k = number_of_NN)
+
+        # jc_loc_1, jb_loc_1 = np.unravel_index(ii[0], clon.shape)
+        # print("RANK: ", comm.Get_rank(), " JC LOC: ", jc_loc_1, " JB LOC: ", jb_loc_1, file=sys.stderr)
 
         # Check if the nearest cell is in this PE's domain and is owned by this PE. This ensures that each station is only done by one PE
         if decomp_domain.ravel()[ii[0][0]] == 0:
@@ -244,7 +247,9 @@ def write_points(comm, data_done, dict_vars, file_name_output):
         if any(len(lst) > 0 for lst in final_data.values()):
             for key in final_data:
                 final_data[key] = np.concatenate(final_data[key])
-
+            sort_indices = np.argsort(final_data["etime"])
+            for key in final_data:
+                final_data[key] = final_data[key][sort_indices]
             ncfile = Dataset(file_name_output, 'a')
             obs_index = ncfile.variables['longitude'].shape[0]
             new_points = final_data['longitude'].shape[0]
@@ -263,6 +268,72 @@ def write_points(comm, data_done, dict_vars, file_name_output):
 
     data_done['counter'] = 0
 
+
+def write_header_points(comm, file_name, dict_vars):
+    if(comm.Get_rank() == 0):
+        ncfile = Dataset(file_name, 'w', format='NETCDF4')
+
+        # Define dimensions
+        ncfile.createDimension('obs', None)  # unlimited
+        ncfile.createDimension('nchar', 20)
+
+        # Define variables
+        stime = ncfile.createVariable('stime', 'f8', ('obs',))
+        stime.units = "days since 1970-01-01 00:00:00"
+        stime.long_name = "start time of observation interval; UTC"
+        stime.calendar = "proleptic_gregorian"
+
+        etime = ncfile.createVariable('etime', 'f8', ('obs',))
+        etime.units = "days since 1970-01-01 00:00:00"
+        etime.long_name = "end time of observation interval; UTC"
+        etime.calendar = "proleptic_gregorian"
+
+        longitude = ncfile.createVariable('longitude', 'f4', ('obs',), fill_value=1.0e+20)
+        longitude.units = "degrees_east"
+        longitude.standard_name = "longitude"
+
+        latitude = ncfile.createVariable('latitude', 'f4', ('obs',), fill_value=1.0e+20)
+        latitude.units = "degrees_north"
+        latitude.standard_name = "latitude"
+
+        elevation = ncfile.createVariable('elevation', 'f4', ('obs',), fill_value=1.0e+20)
+        elevation.units = "m"
+        elevation.long_name = "surface elevation above sea level"
+
+        sampling_height = ncfile.createVariable('sampling_height', 'f4', ('obs',), fill_value=1.0e+20)
+        sampling_height.units = "m"
+        sampling_height.long_name = "sampling height above surface"
+
+        sampling_strategy = ncfile.createVariable('sampling_strategy', 'f4', ('obs',))
+        sampling_strategy.units = "1"
+        sampling_strategy.long_name = "sampling strategy flag"
+        sampling_strategy.comment = "1=low ; 2=mountain ; 3=flight"
+
+        site_name = ncfile.createVariable('site_name', 'S1', ('obs', 'nchar'))
+        site_name.long_name = "station name or ID"
+
+        # Global attributes
+        ncfile.Conventions = "CF-1.8"
+        ncfile.title = "Station input file for ICON ComIn interface XYZ"
+        ncfile.institution = "Empa"
+        ncfile.source = "ICON ComIn interface XYZ"
+        ncfile.version = "1.0"
+        ncfile.author = "Zeno Hug"
+        ncfile.transport_model = "ICON"
+        ncfile.transport_model_version = ""
+        ncfile.experiment = ""
+        ncfile.project = ""
+        ncfile.references = ""
+        ncfile.comment = ""
+        ncfile.license = "CC-BY-4.0"
+        ncfile.history = ""
+        ncfile.close()
+        for variable, parameters in dict_vars.items():
+            ncfile = Dataset(file_name, 'a')
+            temp_var = ncfile.createVariable(variable, 'f8', ('obs',))
+            temp_var.units = parameters['unit']
+            temp_var.long_name = parameters['long_name']
+            ncfile.close()
 
 
 def read_in_points(comm, tree, decomp_domain, clon, hhl, number_of_NN, path_to_file, start_model, end_model, data_vars):
@@ -327,7 +398,105 @@ def read_in_points(comm, tree, decomp_domain, clon, hhl, number_of_NN, path_to_f
      # Find all of the monitoring stations in this local PE's domain and save all relevant data
     (jc_loc, jb_loc, vertical_indices_nearest, vertical_indices_second, vertical_weights,  horizontal_weights, 
         lons, lats, elevations, sampling_heights, sampling_strategies, ids, stimes, etimes) = find_points(
-        lons, lats, sampling_heights, elevations, sampling_strategies, tree, decomp_domain, clon, hhl, number_of_NN, site_names, stimes, etimes)
+        lons, lats, sampling_heights, elevations, sampling_strategies, tree, decomp_domain, clon, hhl, number_of_NN, site_names, stimes, etimes, comm)
+
+    N_points = lons.shape[0]
+
+    # Initialize all needed arrays as empty arrays of correct size and type
+    done_lons = np.empty(N_points, dtype=np.float64)
+    done_lats = np.empty(N_points, dtype=np.float64)
+    done_elevations = np.empty(N_points, dtype=np.float64)
+    done_sampling_heights = np.empty(N_points, dtype=np.float64)
+    done_sampling_strategies = np.empty(N_points, dtype=np.int32)
+    done_site_names = np.empty(N_points, dtype='U20')
+    done_stimes = np.empty(N_points, dtype='datetime64[ns]')
+    done_etimes = np.empty(N_points, dtype='datetime64[ns]')
+    
+
+    done_counter = 0 # counter of how many of the points are already done (since last writeout)
+
+    # Create Dicts with all of the data needed
+    number_of_timesteps = np.zeros(N_points, dtype=np.int32)
+    keys = ['lon', 'lat','elevation', 'sampling_height', 'sampling_strategy', 'jc_loc', 'jb_loc', 'vertical_index1', 'vertical_index2', 'vertical_weight', 'horizontal_weight', 'number_of_steps', 'id', 'stime', 'etime']
+    values = [lons, lats, elevations, sampling_heights, sampling_strategies, jc_loc, jb_loc, vertical_indices_nearest, vertical_indices_second, vertical_weights, horizontal_weights, number_of_timesteps, ids, stimes, etimes]
+    data = {keys[i]:values[i] for i in range(len(keys))}
+
+    keys_done = ['lon', 'lat', 'elevation', 'sampling_height', 'sampling_strategy', 'stime', 'etime', 'counter', 'id']
+    values_done = [done_lons, done_lats, done_elevations, done_sampling_heights, done_sampling_strategies, done_stimes, done_etimes, done_counter, done_site_names]
+    data_done = {keys_done[i]:values_done[i] for i in range(len(keys_done))}
+
+    for variable in data_vars:
+        data[variable] = np.zeros(lons.shape, dtype=np.float64)
+        data_done[variable] = np.empty(N_points, dtype=np.float64)
+
+    return data, data_done # Return the dicts with the data
+
+
+def read_in_points_cif(comm, tree, decomp_domain, clon, hhl, number_of_NN, path_to_file, start_model, end_model, data_vars):
+    """! Read in the local stationary monitoring stations on each PE in the own domain and return all of the relevant data needed for computation as dictionaries
+    @param comm                 MPI communicator containing all working PE's
+    @param tree                 A tree with the cells in them that you can query
+    @param decomp_domain        Array with information about which cells are in this PE's prognostic area
+    @param clon                 Array with the cell longitudes
+    @param hhl                  Array with the height of the half levels
+    @param number_of_NN         Number of nearest cells over which should be interpolated
+    @param path_to_file         The path of the input file
+    @param start_model          datetime object depicting the start datetime of the experiment
+    @param end_model            datetime object depicting the end datetime of the experiment
+    @param data_vars            The data dictionary with the data from the simulation
+    @return  Tuple of dicts that symbolize the data to do and the data done
+    """
+    if comm.Get_rank() == 0:
+        df = pd.read_csv(path_to_file, sep=',')
+        df = df.dropna(subset=['lon', 'lat', 'tstep', 'station', 'alt'])
+        
+        df['datetime'] = pd.to_datetime(df['tstep'], unit='h', origin = start_model)
+
+        # convert the needed data to numpy arrays
+        lons = df['lon'].to_numpy()
+        lats = df['lat'].to_numpy()
+        stimes = df['datetime'].to_numpy()
+        etimes = df['datetime'].to_numpy()
+        elevations = df['alt'].to_numpy()
+        sampling_heights = df['sampling_height'].to_numpy()
+        sampling_strategies = df['flags'].to_numpy() + 2
+        site_names = df['station']
+        
+        # Only keep the points, where the time is between model start and model end
+        valid_mask = (stimes >= start_model) & (etimes <= end_model)
+        lons = lons[valid_mask]
+        lats = lats[valid_mask]
+        elevations = elevations[valid_mask]
+        sampling_heights = sampling_heights[valid_mask]
+        sampling_strategies = sampling_strategies[valid_mask]
+        site_names = site_names[valid_mask]
+        stimes = stimes[valid_mask]
+        etimes = etimes[valid_mask]
+    else:
+        lons = None
+        lats = None
+        elevations = None
+        sampling_heights = None
+        sampling_strategies = None
+        site_names = None
+        stimes = None
+        etimes = None
+
+    
+    # Broadcast the data to all processes, from root 0
+    lons = comm.bcast(lons, root = 0)
+    lats = comm.bcast(lats, root = 0)
+    elevations = comm.bcast(elevations, root = 0)
+    sampling_heights = comm.bcast(sampling_heights, root = 0)
+    sampling_strategies = comm.bcast(sampling_strategies, root = 0)
+    site_names = comm.bcast(site_names, root = 0)
+    stimes = comm.bcast(stimes, root = 0)
+    etimes = comm.bcast(etimes, root = 0)
+
+     # Find all of the monitoring stations in this local PE's domain and save all relevant data
+    (jc_loc, jb_loc, vertical_indices_nearest, vertical_indices_second, vertical_weights,  horizontal_weights, 
+        lons, lats, elevations, sampling_heights, sampling_strategies, ids, stimes, etimes) = find_points(
+        lons, lats, sampling_heights, elevations, sampling_strategies, tree, decomp_domain, clon, hhl, number_of_NN, site_names, stimes, etimes, comm)
 
     N_points = lons.shape[0]
 
