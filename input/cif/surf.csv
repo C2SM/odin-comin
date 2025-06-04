@@ -1,0 +1,5 @@
+,station,network,i,lon,lat,alt,tstep,parameter,icon_ilevel,sampling_height,flags
+0,brm_c,empa,19205,24.65445,45.3155,1009.0,0.0,CH4,-999,15.0,3
+1,bsd_c,univbris,11128,22.65445,45.3155,630.0,1.0,CH4,-999,13.5,3
+2,gat_c,(mohp),6246,23.65445,45.3155,410.0,2.2,CH4,-999,9.9,4
+3,hel_c,(mohp),5827,25.65445,45.3155,153.0,3.4,CH4,-999,7.2,4

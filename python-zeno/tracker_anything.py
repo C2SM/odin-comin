@@ -71,6 +71,7 @@ for var, spec in config['dict_vars_cif_sat'].items():
 for var, spec in config['dict_vars_cif_stations'].items():
     spec['factor'] = [float(f) for f in spec['factor']]
 
+config['accepted_distance']= float(config['accepted_distance'])
 ## Global Constants:
 NUMBER_OF_NN = config['NUMBER_OF_NN']
 time_interval_writeout = config['time_interval_writeout']
@@ -93,6 +94,7 @@ file_name_output_stations_cif = config['file_name_output_stations_cif']
 file_name_output_sat_cif = config['file_name_output_sat_cif']
 file_name_output = config['file_name_output']
 file_name_output_sat = config['file_name_output_sat']
+accepted_distance = config['accepted_distance']
 
 plugin_dir = config['plugin_dir']
 if plugin_dir not in sys.path:
@@ -231,30 +233,30 @@ def stations_init():
 
     # Convert the longitude latitude data to xyz data for the KDTree
     xyz = np.c_[lonlat2xyz(clon.ravel(),clat.ravel())]
-    # tree = KDTree(xyz) # Create the KDTree, composed of the xyz data
+    tree = KDTree(xyz) # Create the KDTree, composed of the xyz data
 
-    coords_rad = np.deg2rad(np.c_[clat.ravel(), clon.ravel()])
-    tree = BallTree(coords_rad, metric='haversine')
+    # coords_rad = np.deg2rad(np.c_[clat.ravel(), clon.ravel()])
+    # tree = BallTree(coords_rad, metric='haversine')
 
     # Get all of the monitoring stations and save all of the relevant data
     if(do_monitoring_stations):
         message("Now reading in and locating the correct indices for the monitoring stations", msgrank)
-        data_monitoring_stations_to_do, data_monitoring_stations_done = read_in_points(comm, tree, decomp_domain, clon, hhl, NUMBER_OF_NN, path_to_input_nc, run_start, run_stop, data)
+        data_monitoring_stations_to_do, data_monitoring_stations_done = read_in_points(comm, tree, decomp_domain, clon, hhl, NUMBER_OF_NN, path_to_input_nc, run_start, run_stop, data, accepted_distance)
         write_header_points(comm, file_name_output, dict_vars)
 
     if(do_satellite):
         message("Now reading in and locating the correct indices for the satellite data", msgrank)
-        data_satellite_to_do, data_satellite_done, cams_files_dict = read_in_satellite_data(comm, tree, decomp_domain, clon, run_start, run_stop, tropomi_filename, cams_base_path, cams_params_file)
+        data_satellite_to_do, data_satellite_done, cams_files_dict = read_in_satellite_data(comm, tree, decomp_domain, clon, run_start, run_stop, tropomi_filename, cams_base_path, cams_params_file, accepted_distance)
         write_header_sat(comm, file_name_output_sat)
 
     if(do_satellite_cif):
         message("Now reading in and locating the correct indices for the cif satellite data", msgrank)
-        data_sat_cif_to_do, data_sat_cif_done = read_in_satellite_data_cif(comm, tree, decomp_domain, clon, run_start, run_stop, path_to_input_sat_cif, NUMBER_OF_NN)
+        data_sat_cif_to_do, data_sat_cif_done = read_in_satellite_data_cif(comm, tree, decomp_domain, clon, run_start, run_stop, path_to_input_sat_cif, NUMBER_OF_NN, accepted_distance)
         write_header_sat_cif(comm, dict_vars_cif_sat, file_name_output_sat_cif)
     if(do_stations_cif):
         message("Now reading in and locating the correct indices for the cif station data", msgrank)
-        data_stations_cif_to_do, data_stations_cif_done = read_in_points_cif(comm, tree, decomp_domain, clon, hhl, NUMBER_OF_NN,path_to_input_stations_cif, run_start, run_stop, dict_vars_cif_stations)
-        write_header_points(comm, file_name_output_stations_cif, dict_vars_cif_stations)
+        data_stations_cif_to_do, data_stations_cif_done = read_in_points_cif(comm, tree, decomp_domain, clon, hhl, NUMBER_OF_NN,path_to_input_stations_cif, run_start, run_stop, dict_vars_cif_stations, accepted_distance)
+        write_header_points_cif(comm, file_name_output_stations_cif)
     message("Done reading in all data", msgrank)
 
 
@@ -320,38 +322,13 @@ def tracking():
 
     # Monitoring of the variables for the different problems
     if do_monitoring_stations:
-
-
-        # RANK:  22  JC LOC:  [12 13 11 12]  JB LOC:  [14 13 14 13]
-        # RANK:  64  JC LOC:  [2 7 1 5]  JB LOC:  [14 15 14 13]
-        # RANK:  65  JC LOC:  [ 4 11 12 13]  JB LOC:  [14 13 14 11]
-        # RANK:  68  JC LOC:  [ 7  6 15 15]  JB LOC:  [12 12  9 13]
-
-
-        # if comm.Get_rank() == 22:
-        #     print(" RANK ", comm.Get_rank(), " has CH4 EMIS column on same index: ", CH4_EMIS_np[12, : , 14, 0, 0], file=sys.stderr)
-        # if comm.Get_rank() == 64:
-        #     print(" RANK ", comm.Get_rank(), " has CH4 EMIS column on same index: ", CH4_EMIS_np[12, : , 14, 0, 0], file=sys.stderr)
-        # if comm.Get_rank() == 65:
-        #     print(" RANK ", comm.Get_rank(), " has CH4 EMIS column on same index: ", CH4_EMIS_np[12, : , 14, 0, 0], file=sys.stderr)
-        # if comm.Get_rank() == 68:
-        #     print(" RANK ", comm.Get_rank(), " has CH4 EMIS column on same index: ", CH4_EMIS_np[12, : , 14, 0, 0], file=sys.stderr)
-        # if comm.Get_rank() == 22:
-        #     print(" RANK ", comm.Get_rank(), " has CH4 EMIS column on same result: ", CH4_EMIS_np[12, : , 14, 0, 0], file=sys.stderr)
-        # if comm.Get_rank() == 64:
-        #     print(" RANK ", comm.Get_rank(), " has CH4 EMIS column on same result: ", CH4_EMIS_np[2, : , 14, 0, 0], file=sys.stderr)
-        # if comm.Get_rank() == 65:
-        #     print(" RANK ", comm.Get_rank(), " has CH4 EMIS column on same result: ", CH4_EMIS_np[4, : , 14, 0, 0], file=sys.stderr)
-        # if comm.Get_rank() == 68:
-        #     print(" RANK ", comm.Get_rank(), " has CH4 EMIS column on same result: ", CH4_EMIS_np[7, : , 12, 0, 0], file=sys.stderr)
-
         tracking_points(datetime, data_monitoring_stations_to_do, data_monitoring_stations_done, data_np, dict_vars, operations_dict)
     if do_satellite:
         tracking_CH4_satellite(datetime, CH4_EMIS_np, CH4_BG_np, pres_ifc_np, pres_np, data_satellite_to_do, data_satellite_done, cams_prev_data, cams_next_data)
     if do_satellite_cif:
-        tracking_CH4_satellite_cif_pressures(datetime, data_sat_cif_to_do, data_sat_cif_done, data_np_sat_cif, dict_vars_cif_sat, operations_dict, pres_np)
+        tracking_satellite_cif_pressures(datetime, data_sat_cif_to_do, data_sat_cif_done, data_np_sat_cif, dict_vars_cif_sat, operations_dict, pres_np)
     if do_stations_cif:
-        tracking_points(datetime, data_stations_cif_to_do, data_stations_cif_done, data_np_stations_cif, dict_vars_cif_stations, operations_dict)
+        tracking_points_cif(datetime, data_stations_cif_to_do, data_stations_cif_done, data_np_stations_cif, dict_vars_cif_stations, operations_dict)
         
 
     ## Writeout
@@ -364,7 +341,7 @@ def tracking():
         if do_satellite_cif:
             write_satellite_cif(comm, data_sat_cif_done, dict_vars_cif_sat, file_name_output_sat_cif)
         if do_stations_cif:
-            write_points(comm, data_stations_cif_done, dict_vars_cif_stations, file_name_output_stations_cif)
+            write_points_cif(comm, data_stations_cif_done, dict_vars_cif_stations, file_name_output_stations_cif)
 
         # Reset data
         number_of_timesteps = 0

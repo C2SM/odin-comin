@@ -60,15 +60,18 @@ def lonlat2xyz(lon, lat):
     clat = np.cos(lat) 
     return clat * np.cos(lon), clat * np.sin(lon), np.sin(lat)
 
-def find_stations_satellite_cif(lons, lats, timesteps, parameters, tree, decomp_domain, clon, number_of_cells, comm):
-    """! Find the satellite observation points on each PE in the own domain and return all of the relevant data needed for computation. All lists need to have the same length
+def find_stations_satellite_cif(lons, lats, timesteps, parameters, tree, decomp_domain, clon, number_of_cells, accepted_distance):
+    """! Find the satellite observation points for cif on each PE in the own domain and return all of the relevant data needed for computation. All lists need to have the same length
     @param lons                 A list of longitudes of points to locate
     @param lats                 A list of latitudes of points to locate
     @param timesteps            A list of timesteps at which the measurements have been taken of the points needed to be located
+    @param parameters           A list of parameters, i.e. variables which should be measured of points to locate
     @param tree                 A tree with the cells in them that you can query
     @param decomp_domain        Array with information about which cells are in this PE's prognostic area
     @param clon                 Array with the cell longitudes
-    @return  All of the relevant data of the points found in this PE's prognostic area: jb_loc, jc_loc, lon, lat, timesteps
+    @param number_of_cells      Number of over how many cells should be interpolated
+    @param accepted_distance    Float, distance in km from the nearest found cell that is accepted (i.e. if the point is nowhere near our grid, we reject)
+    @return  All of the relevant data of the points found in this PE's prognostic area: jb_loc, jc_loc, lon, lat, timesteps, parameters, weights
     """
     # Define all lists as empty
     jc_locs = []
@@ -83,11 +86,13 @@ def find_stations_satellite_cif(lons, lats, timesteps, parameters, tree, decomp_
     for lon, lat, timestep, parameter in zip(lons, lats, timesteps, parameters):
         
         # Query the tree for the nearest cell
-        # dd, ii = tree.query([lonlat2xyz(np.deg2rad(lon), np.deg2rad(lat))], k = number_of_cells)
-        dd, ii = tree.query([[np.deg2rad(lat), np.deg2rad(lon)]], k = number_of_cells)
+        dd, ii = tree.query([lonlat2xyz(np.deg2rad(lon), np.deg2rad(lat))], k = number_of_cells)
+        # dd, ii = tree.query([[np.deg2rad(lat), np.deg2rad(lon)]], k = number_of_cells)
         closest_distance = dd[0][0] * 6371.0
+        # print(f"Closest distance from PE {comm.Get_rank()}: {closest_distance} for lon, lat: {lon}, {lat}", file=sys.stderr)
         # Check if the nearest cell is in this PE's domain and is owned by this PE. This ensures that each station is only done by one PE
-        if decomp_domain.ravel()[ii[0][0]] == 0 and closest_distance <= 12.0:
+        if decomp_domain.ravel()[ii[0][0]] == 0 and closest_distance <= accepted_distance:
+            print(f"Closest distance from PE which owns: {closest_distance}", file=sys.stderr)
             jc_loc, jb_loc = np.unravel_index(ii[0], clon.shape) # Extract the indexes
             dd_local = dd[0]
 
@@ -136,7 +141,7 @@ def find_stations_satellite_cif(lons, lats, timesteps, parameters, tree, decomp_
             np.array(weights_all, dtype = np.float64))
 
 
-def find_stations_satellite(lons, lats, timesteps, tree, decomp_domain, clon, pavg0_sat, pw_sat, ak_sat, qa0_sat, cams_tree):
+def find_stations_satellite(lons, lats, timesteps, tree, decomp_domain, clon, pavg0_sat, pw_sat, ak_sat, qa0_sat, cams_tree, accepted_distance):
     """! Find the satellite observation points on each PE in the own domain and return all of the relevant data needed for computation. All lists need to have the same length
     @param lons                 A list of longitudes of points to locate
     @param lats                 A list of latitudes of points to locate
@@ -149,6 +154,7 @@ def find_stations_satellite(lons, lats, timesteps, tree, decomp_domain, clon, pa
     @param ak_sat               A list of the ak values of points to locate
     @param qa0_sat              A list of the qa0 values of points to locate
     @param cams_tree            A tree with the cells of the cams data in them that you can query
+    @param accepted_distance    Float, distance in km from the nearest found cell that is accepted (i.e. if the point is nowhere near our grid, we reject)
     @return  All of the relevant data of the points found in this PE's prognostic area: jb_loc, jc_loc, lon, lat, timesteps, pavg0, pw, ak, qa0, cams_indicesm fracs_cams
     """
     # Define all lists as empty
@@ -169,9 +175,9 @@ def find_stations_satellite(lons, lats, timesteps, tree, decomp_domain, clon, pa
         
         # Query the tree for the nearest cell
         dd, ii = tree.query([lonlat2xyz(np.deg2rad(lon), np.deg2rad(lat))], k = 1)
-
+        closest_distance = dd[0] * 6371.0
         # Check if the nearest cell is in this PE's domain and is owned by this PE. This ensures that each station is only done by one PE
-        if decomp_domain.ravel()[ii[0]] == 0:
+        if decomp_domain.ravel()[ii[0]] == 0 and closest_distance <= accepted_distance:
             jc_loc, jb_loc = np.unravel_index(ii[0], clon.shape) # Extract the indexes
 
             # Compute frac_cams and cams_index for later appending cams data to the model data
@@ -348,7 +354,7 @@ def write_satellite(comm, done_data, file_name_output):
             
     done_data['counter'] = 0 # Reset the done counter
 
-def read_in_satellite_data(comm, tree, decomp_domain, clon, start_model, end_model, tropomi_filename, cams_base_path, cams_params_file):
+def read_in_satellite_data(comm, tree, decomp_domain, clon, start_model, end_model, tropomi_filename, cams_base_path, cams_params_file, accepted_distance):
     """! Read in the satellite measurement points on each PE in the own domain and return all of the relevant data needed for computation as dictionaries
     @param comm                 MPI communicator containing all working PE's
     @param tree                 A tree with the cells in them that you can query
@@ -447,7 +453,7 @@ def read_in_satellite_data(comm, tree, decomp_domain, clon, start_model, end_mod
     cams_xyz = np.c_[lonlat2xyz(cams_clon, cams_clat)]
     cams_tree = KDTree(cams_xyz)
 
-    (jc_loc_satellite, jb_loc_satellite, satellite_lons, satellite_lats, satellite_timestep, pavg0_sat, pw_sat, ak_sat, qa0_sat, cams_indices_sat, fracs_cams) = find_stations_satellite(satellite_lons, satellite_lats, obs_time_dts, tree, decomp_domain, clon, pavg0_sat, pw_sat, ak_sat, qa0_sat, cams_tree)
+    (jc_loc_satellite, jb_loc_satellite, satellite_lons, satellite_lats, satellite_timestep, pavg0_sat, pw_sat, ak_sat, qa0_sat, cams_indices_sat, fracs_cams) = find_stations_satellite(satellite_lons, satellite_lats, obs_time_dts, tree, decomp_domain, clon, pavg0_sat, pw_sat, ak_sat, qa0_sat, cams_tree, accepted_distance)
    
     N_satellite_points = satellite_lons.shape[0] # Amount of satellite points in the local PE
 
@@ -469,7 +475,7 @@ def read_in_satellite_data(comm, tree, decomp_domain, clon, start_model, end_mod
     
     return local_data_to_do, local_data_done, cams_files_dict # Return all of the Data in Dicts
 
-def read_in_satellite_data_cif(comm, tree, decomp_domain, clon, start_model, end_model, path_to_csv, number_of_cells):
+def read_in_satellite_data_cif(comm, tree, decomp_domain, clon, start_model, end_model, path_to_csv, number_of_cells, accepted_distance):
     """! Read in the satellite measurement points on each PE in the own domain and return all of the relevant data needed for computation as dictionaries
     @param comm                 MPI communicator containing all working PE's
     @param tree                 A tree with the cells in them that you can query
@@ -513,7 +519,7 @@ def read_in_satellite_data_cif(comm, tree, decomp_domain, clon, start_model, end
     parameters = comm.bcast(parameters, root = 0)
     # print(f"lons: {lons.shape}, lats: {lats.shape}, timesteps: {timesteps.shape}, params: {parameters.shape}", file=sys.stderr)
 
-    (jc_loc_satellite, jb_loc_satellite, satellite_lons, satellite_lats, satellite_timestep, satellite_parameters, weights_all) = find_stations_satellite_cif(lons, lats, timesteps, parameters, tree, decomp_domain, clon, number_of_cells, comm)
+    (jc_loc_satellite, jb_loc_satellite, satellite_lons, satellite_lats, satellite_timestep, satellite_parameters, weights_all) = find_stations_satellite_cif(lons, lats, timesteps, parameters, tree, decomp_domain, clon, number_of_cells, accepted_distance)
    
     # print(f"RANK [{comm.Get_rank()}] AFTER lons: {satellite_lons.shape}, AFTER lats: {satellite_lats.shape}, AFTER timesteps: {satellite_timestep.shape}, AFTER params: {satellite_parameters.shape}, jb_loc: {jb_loc_satellite.shape}, jc_loc: {jc_loc_satellite.shape}", file=sys.stderr)
     N_satellite_points = satellite_lons.shape[0] # Amount of satellite points in the local PE
@@ -622,7 +628,7 @@ def tracking_CH4_satellite_cif_same_index(datetime, data_to_do, data_done, data_
                 data_to_do[key] = data_to_do[key][keep_mask]
         
 
-def tracking_CH4_satellite_cif_pressures(datetime, data_to_do, data_done, data_np, dict_vars, operations_dict, pres_np):
+def tracking_satellite_cif_pressures(datetime, data_to_do, data_done, data_np, dict_vars, operations_dict, pres_np):
     """! Track the CH4 of the satellite measurements. It interpolates Move data that is done being measured to the data_done dictionary
     @param datetime             Current datetime (np.datetime object)
     @param data_to_do           The dictionary with the data that needs to be done
