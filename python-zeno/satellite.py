@@ -12,15 +12,18 @@
 # - netCDF4 library
 #   - Access to Dataset
 # - pandas library
-#   - Access to pandas.to_datetime
+#   - Access to pandas.to_datetime and pandas.read_csv
 # - os library
+# - sys library
 # - datetime library
 # - scipy library
 #   - Access to scipy.spatial.KDTree
+# - shapely library
+#   - Access to shapely.Polygon and shapely.STRtree
 # - get_int_coefs module (local)
 #
 # @section author_satellite Author(s)
-# - Created by Zeno Hug on 05/23/2025.
+# - Created by Zeno Hug on 06/18/2025.
 #
 # Copyright (c) 2025 Empa.  All rights reserved.
 
@@ -29,6 +32,7 @@ import xarray as xr
 import pandas as pd
 from netCDF4 import Dataset
 from scipy.spatial import KDTree
+from shapely import Polygon, STRtree
 import datetime as datetimelib
 from get_int_coefs import *
 import sys
@@ -36,6 +40,77 @@ import os
 
 ## Constants:
 Mda, MCH4 = 28.964, 16.04
+
+
+def pad_list_of_lists_float(list_of_lists, pad_value=0.0):
+    """! Pads a list of lists to a numpy array, with pad value and of type float
+    @param list_of_lists    A list of lists wanting to be padded and converted to a numpy array
+    @param pad_value        The value with which should be padded
+    @return  The padded numpy array
+    """
+    if not list_of_lists:
+        return np.array([], dtype=np.float64).reshape(0, 0)
+
+    max_len = max(len(inner) for inner in list_of_lists)
+    padded_lists = [list(inner) + [pad_value] * (max_len - len(inner)) for inner in list_of_lists]
+    return np.array(padded_lists, dtype=np.float64)
+
+def pad_list_of_lists_int(list_of_lists, pad_value=0):
+    """! Pads a list of lists to a numpy array, with pad value and of type int
+    @param list_of_lists    A list of lists wanting to be padded and converted to a numpy array
+    @param pad_value        The value with which should be padded
+    @return  The padded numpy array
+    """
+    if not list_of_lists:
+        return np.array([], dtype=np.int32).reshape(0, 0)
+
+    max_len = max(len(inner) for inner in list_of_lists)
+    padded_lists = [list(inner) + [pad_value] * (max_len - len(inner)) for inner in list_of_lists]
+    return np.array(padded_lists, dtype=np.int32)
+
+def interpolation_pressure(ready_mask, CH4_BG_np, CH4_EMIS_np, jc_ready_sat, jb_ready_sat, pres_np, data_to_do):
+    """! The full interpolation method. It interpolates a whole column. The interpolation is done horizontally via precomputed weights and vertically via pressure matching
+    @param list_of_lists    A list of lists wanting to be padded and converted to a numpy array
+    @param pad_value        The value with which should be padded
+    @return  The padded numpy array
+    """
+    num_ready = np.sum(ready_mask)
+    num_levels = len(CH4_BG_np[0, :, 0].squeeze())
+    ICON_profile = np.empty((num_ready, num_levels), dtype = np.float64)
+    for i in range(num_ready):
+            jc = jc_ready_sat[i]
+            jb = jb_ready_sat[i]
+            profiles = (
+                (Mda / MCH4) * CH4_BG_np[jc, :, jb]\
+                + 1.e9 * (Mda / MCH4) * CH4_EMIS_np[jc, :, jb]
+            )
+            result = np.empty(num_levels, dtype = np.float64)
+            pres = (pres_np[jc, :, jb].squeeze()) / 1.e2
+            target_pres = pres_np[jc[0], :, jb[0]].squeeze()
+            for j in range(num_levels):
+                this_target_pressure = target_pres[j]
+                result[j] = data_to_do['weights'][ready_mask][i][0] * profiles[0, j]
+
+                for k in range(1, len(jb)):
+                    best_index = int(np.argmin(np.abs(pres_np[jc[k], :, jb[k]] - this_target_pressure)))
+
+                    actual_pressure_closest = pres_np[jc[k], best_index, jb[k]]
+                    second_index = best_index
+                    # Second index is for height interpolation. depending on where the closest height is, compute the second index, also taking into consideration boundaries
+                    if actual_pressure_closest >= this_target_pressure and actual_pressure_closest != pres_np[jc[k], -1, jb[k]]:
+                        second_index += 1
+                    elif actual_pressure_closest < this_target_pressure and actual_pressure_closest != pres_np[jc[k], 0, jb[k]]:
+                        second_index -= 1
+
+                    second_pres = pres_np[jc[k], second_index, jb[k]]
+                    vertical_weight = 0
+                    if second_pres - actual_pressure_closest != 0:
+                        vertical_weight = (this_target_pressure - actual_pressure_closest) / (second_pres - actual_pressure_closest)
+
+                    this_cell_interpolation_vertical = profiles[k , best_index] + vertical_weight * (profiles[k, second_index] - profiles[k, best_index])
+                    result[j] += data_to_do['weights'][ready_mask][i][k] * this_cell_interpolation_vertical
+            ICON_profile[i, :] = result
+    return ICON_profile
 
 def datetime_to_milliseconds_since_reference(arr, reference_str="2019-01-01T11:14:35.629"):
     """! Converts datetime 64 to milliseconds since a reference time.
@@ -87,12 +162,9 @@ def find_stations_satellite_cif(lons, lats, timesteps, parameters, tree, decomp_
         
         # Query the tree for the nearest cell
         dd, ii = tree.query([lonlat2xyz(np.deg2rad(lon), np.deg2rad(lat))], k = number_of_cells)
-        # dd, ii = tree.query([[np.deg2rad(lat), np.deg2rad(lon)]], k = number_of_cells)
         closest_distance = dd[0][0] * 6371.0
-        # print(f"Closest distance from PE {comm.Get_rank()}: {closest_distance} for lon, lat: {lon}, {lat}", file=sys.stderr)
         # Check if the nearest cell is in this PE's domain and is owned by this PE. This ensures that each station is only done by one PE
         if decomp_domain.ravel()[ii[0][0]] == 0 and closest_distance <= accepted_distance:
-            print(f"Closest distance from PE which owns: {closest_distance}", file=sys.stderr)
             jc_loc, jb_loc = np.unravel_index(ii[0], clon.shape) # Extract the indexes
             dd_local = dd[0]
 
@@ -141,7 +213,7 @@ def find_stations_satellite_cif(lons, lats, timesteps, parameters, tree, decomp_
             np.array(weights_all, dtype = np.float64))
 
 
-def find_stations_satellite(lons, lats, timesteps, tree, decomp_domain, clon, pavg0_sat, pw_sat, ak_sat, qa0_sat, cams_tree, accepted_distance):
+def find_stations_satellite(lons, lats, timesteps, tree, decomp_domain, clon, pavg0_sat, pw_sat, ak_sat, qa0_sat, cams_tree, accepted_distance, longitude_corners, latitude_corners, tree_corners, icon_polygons):
     """! Find the satellite observation points on each PE in the own domain and return all of the relevant data needed for computation. All lists need to have the same length
     @param lons                 A list of longitudes of points to locate
     @param lats                 A list of latitudes of points to locate
@@ -155,7 +227,11 @@ def find_stations_satellite(lons, lats, timesteps, tree, decomp_domain, clon, pa
     @param qa0_sat              A list of the qa0 values of points to locate
     @param cams_tree            A tree with the cells of the cams data in them that you can query
     @param accepted_distance    Float, distance in km from the nearest found cell that is accepted (i.e. if the point is nowhere near our grid, we reject)
-    @return  All of the relevant data of the points found in this PE's prognostic area: jb_loc, jc_loc, lon, lat, timesteps, pavg0, pw, ak, qa0, cams_indicesm fracs_cams
+    @param longitude_corners    A 2D array with the information of the corners of the satellite observation. This array is the longitude information
+    @param latitude_corners     A 2D array with the information of the corners of the satellite observation. This array is the latitude information
+    @param tree_corners         A tree, with the icon polygons in it
+    @param icon_polygons        The icon polygons
+    @return  All of the relevant data of the points found in this PE's prognostic area: jc_loc, jb_loc, lon, lat, timesteps, pavg0, pw, ak, qa0, cams_indices, fracs_cams, weights
     """
     # Define all lists as empty
     jc_locs = []
@@ -169,26 +245,69 @@ def find_stations_satellite(lons, lats, timesteps, tree, decomp_domain, clon, pa
     qa0_local = []
     cams_indices_local = []
     fracs_cams_local = []
+    weights_all = []
 
-    # Loop thorugh every station
-    for lon, lat, timestep, pavg0, pw, ak, qa0 in zip(lons, lats, timesteps, pavg0_sat, pw_sat, ak_sat, qa0_sat):
-        
+    # Loop through every station
+    for i in range(len(lons)):
+        lon = lons[i]
+        lat = lats[i]
+        timestep = timesteps[i]
+        pavg0 = pavg0_sat[i]
+        pw = pw_sat[i]
+        ak = ak_sat[i]
+        qa0 = qa0_sat[i]
+
         # Query the tree for the nearest cell
         dd, ii = tree.query([lonlat2xyz(np.deg2rad(lon), np.deg2rad(lat))], k = 1)
         closest_distance = dd[0] * 6371.0
         # Check if the nearest cell is in this PE's domain and is owned by this PE. This ensures that each station is only done by one PE
         if decomp_domain.ravel()[ii[0]] == 0 and closest_distance <= accepted_distance:
-            jc_loc, jb_loc = np.unravel_index(ii[0], clon.shape) # Extract the indexes
+            jc_row = []
+            jb_row = []
+            weight_row = []
+            jc_loc_reserve, jb_loc_reserve = np.unravel_index(ii[0], clon.shape) # Extract the indexes as reserve if the polygon matching didn't work
+            tropomi_polygon = Polygon(zip(np.deg2rad(longitude_corners[:, i]), np.deg2rad(latitude_corners[:, i])))
+
+            possible_matches = tree_corners.query(tropomi_polygon)
+            for match in possible_matches:
+                if tropomi_polygon.intersects(icon_polygons[match]):
+                    overlap_area = tropomi_polygon.intersection(icon_polygons[match]).area
+                    # if a ICON cell is at least covered by some percentage with the obs, then count this cell
+                    if icon_polygons[match].area > 0.0 and overlap_area > 0.0:
+                        jc_r, jb_r = np.unravel_index(match, clon.shape)
+                        jc_row.append(jc_r)
+                        jb_row.append(jb_r)
+                        weight_row.append(overlap_area / tropomi_polygon.area)
+
+            # If the polygon matching didn't work, just take the nearest cell
+            if jc_row == []:
+                jc_row = [jc_loc_reserve]
+                jb_row = [jb_loc_reserve]
+                weight_row = [1.0]
+
+
+            # Get sorted indices based on weights (descending)
+            sorted_indices = sorted(range(len(weight_row)), key=lambda i: weight_row[i], reverse=True)
+
+            # Apply the sorting to each list
+            jc_row = [jc_row[i] for i in sorted_indices]
+            jb_row = [jb_row[i] for i in sorted_indices]
+            weight_row = [weight_row[i] for i in sorted_indices]
+
+
+            if weight_row != [] and np.sum(weight_row) != 0:
+                weight_row = weight_row / np.sum(weight_row)
+
 
             # Compute frac_cams and cams_index for later appending cams data to the model data
             cams_distances, cams_index = cams_tree.query([lonlat2xyz(np.deg2rad(lon), np.deg2rad(lat))], k = 1)
             cams_prev = timestep.replace(hour=(timestep.hour // 6) * 6, minute=0, second=0, microsecond=0)
             cams_next = cams_prev + datetimelib.timedelta(hours=6)
-            frac_cams = (timestep - cams_prev).total_seconds() / (cams_next - cams_prev).total_seconds()
+            frac_cams = (timestep - cams_prev).total_seconds() / (cams_next - cams_prev).total_seconds()            
 
             # Append all data, for the cells that were found in this PE's domain
-            jc_locs.append(jc_loc)
-            jb_locs.append(jb_loc)
+            jc_locs.append(jc_row)
+            jb_locs.append(jb_row)
             lons_local.append(lon)
             lats_local.append(lat)
             timesteps_local.append(timestep)
@@ -198,10 +317,16 @@ def find_stations_satellite(lons, lats, timesteps, tree, decomp_domain, clon, pa
             qa0_local.append(qa0)
             cams_indices_local.append(cams_index)
             fracs_cams_local.append(frac_cams)
+            weights_all.append(weight_row)
+
+    # Pad all of the potentially different lengths of lists
+    jc_locs = pad_list_of_lists_int(jc_locs, pad_value=0)
+    jb_locs = pad_list_of_lists_int(jb_locs, pad_value=0)
+    weights_all = pad_list_of_lists_float(weights_all, pad_value=0.0)
 
     # Return all data as numpy arrays
-    return (np.array(jc_locs, dtype = np.int32),
-            np.array(jb_locs, dtype = np.int32),
+    return (jc_locs,
+            jb_locs,
             np.array(lons_local, dtype = np.float64),
             np.array(lats_local, dtype = np.float64),
             np.array(timesteps_local), 
@@ -210,9 +335,14 @@ def find_stations_satellite(lons, lats, timesteps, tree, decomp_domain, clon, pa
             np.array(ak_local, dtype = np.float64), 
             np.array(qa0_local, dtype = np.float64), 
             np.array(cams_indices_local, dtype = np.int32), 
-            np.array(fracs_cams_local, dtype = np.float64))
+            np.array(fracs_cams_local, dtype = np.float64), 
+            weights_all)
 
 def write_header_sat(comm, file_name):
+    """! Writes the header for the output nc file of the satellite CH4 measurements
+    @param comm         MPI communicator containing all working PE's
+    @param file_name    The file name of the output file
+    """
     if comm.Get_rank() == 0:
         ncfile_sat = Dataset(file_name, 'w', format='NETCDF4')
         index = ncfile_sat.createDimension('index', None)
@@ -224,11 +354,16 @@ def write_header_sat(comm, file_name):
         ch4 = ncfile_sat.createVariable('CH4', 'f8',('index',) )
         ncfile_sat.close()
     
-def write_header_sat_cif(comm, dict_vars, file_name_output):
+def write_header_sat_cif(comm, file_name, num_levels):
+    """! Writes the header for the output nc file of the satellite full column write out measurements
+    @param comm         MPI communicator containing all working PE's
+    @param file_name    The file name of the output file
+    @param num_levels   The number of levels that the model has
+    """
     if comm.Get_rank() == 0:
-        ncfile_sat = Dataset(file_name_output, 'w', format='NETCDF4')
+        ncfile_sat = Dataset(file_name, 'w', format='NETCDF4')
         index = ncfile_sat.createDimension('index', None)
-        level = ncfile_sat.createDimension('level', 60)
+        level = ncfile_sat.createDimension('level', num_levels)
         date = ncfile_sat.createVariable('date', 'u8',('index',) )
         date.units = "milliseconds since 2019-01-01 00:00:00" 
         date.calendar = "proleptic_gregorian"
@@ -238,8 +373,8 @@ def write_header_sat_cif(comm, dict_vars, file_name_output):
         measurement = ncfile_sat.createVariable('measurement', 'f8',('index','level') )
         ncfile_sat.close()
 
-def write_satellite_cif(comm, done_data, dict_vars, file_name_output):
-    """!Function to write satellite data to output nc file using preallocated arrays with a counter.
+def write_satellite_cif(comm, done_data, file_name_output):
+    """!Function to write satellite column data to output nc file using preallocated arrays with a counter.
     @param comm                 MPI communicator containing all working PE's
     @param done_data            Dictionary with the data that is done
     @param file_name_output     Filename of the output nc file. Expects the header of the nc file to be written already
@@ -300,7 +435,7 @@ def write_satellite_cif(comm, done_data, dict_vars, file_name_output):
     done_data['counter'] = 0 # Reset the done counter
 
 def write_satellite(comm, done_data, file_name_output):
-    """!Function to write satellite data to output nc file using preallocated arrays with a counter.
+    """!Function to write satellite CH4 data to output nc file using preallocated arrays with a counter.
     @param comm                 MPI communicator containing all working PE's
     @param data_done            Dictionary with the data that is done
     @param file_name_output     Filename of the output nc file. Expects the header of the nc file to be written already
@@ -354,12 +489,14 @@ def write_satellite(comm, done_data, file_name_output):
             
     done_data['counter'] = 0 # Reset the done counter
 
-def read_in_satellite_data(comm, tree, decomp_domain, clon, start_model, end_model, tropomi_filename, cams_base_path, cams_params_file, accepted_distance):
+def read_in_satellite_data(comm, tree, decomp_domain, clon, start_model, end_model, tropomi_filename, cams_base_path, cams_params_file, accepted_distance, icon_polygons):
     """! Read in the satellite measurement points on each PE in the own domain and return all of the relevant data needed for computation as dictionaries
     @param comm                 MPI communicator containing all working PE's
     @param tree                 A tree with the cells in them that you can query
     @param decomp_domain        Array with information about which cells are in this PE's prognostic area
     @param clon                 Array with the cell longitudes
+    @param accepted_distance    Float, value which distance should be accepted (in km). Just there to reject points that are very far away and lead to weird results
+    @param icon_polygons        The icon polygons as a list, same order as in clon etc.
     @param tropomi_filename     Path to the tropomi nc file
     @param cams_base_path       Base path of the CAMS data
     @param cams_params_file     path to the CAMS parameter file
@@ -378,6 +515,7 @@ def read_in_satellite_data(comm, tree, decomp_domain, clon, start_model, end_mod
         cams_files_dict[dt] = full_path
         dt += datetimelib.timedelta(hours=6)
 
+
     if comm.Get_rank() == 0:
         tropomi_ds = xr.open_dataset(tropomi_filename)
         # Extract all the needed values
@@ -388,6 +526,8 @@ def read_in_satellite_data(comm, tree, decomp_domain, clon, start_model, end_mod
         qa0_sat = tropomi_ds['qa0'].values
         ak_sat = tropomi_ds['ak'].values
         pw_sat = tropomi_ds['pw'].values
+        latitude_corners = tropomi_ds['latitude_bounds'].values
+        longitude_corners = tropomi_ds['longitude_bounds'].values
         obs_time_dts = pd.to_datetime(times_sat)
         
         # Only keep the points, where the time is between the starting and ending time
@@ -399,8 +539,11 @@ def read_in_satellite_data(comm, tree, decomp_domain, clon, start_model, end_mod
         ak_sat = ak_sat[valid_mask]
         qa0_sat = qa0_sat[valid_mask]
         obs_time_dts = obs_time_dts[valid_mask]
+        latitude_corners = latitude_corners[: , valid_mask]
+        longitude_corners = longitude_corners[:, valid_mask]
 
-        # Load one example CAMS file, for computing the correct CAMS indices
+
+        # Load one example CAMS file, for computing the correct CAMS indices. This supposes that the CAMS data is ordered the same way always
         cams_example_time = start_model.replace(hour=(start_model.hour // 6) * 6, minute=0, second=0, microsecond=0)
         example_file = cams_files_dict[cams_example_time]
         cams_ds = xr.open_dataset(example_file)
@@ -433,6 +576,8 @@ def read_in_satellite_data(comm, tree, decomp_domain, clon, start_model, end_mod
         hybm = None
         hyai = None
         hybi = None
+        longitude_corners = None
+        latitude_corners = None
 
     # Broadcast the data to all processes, from root 0
     satellite_lons = comm.bcast(satellite_lons, root = 0)
@@ -448,12 +593,17 @@ def read_in_satellite_data(comm, tree, decomp_domain, clon, start_model, end_mod
     hybm = comm.bcast(hybm, root = 0)
     hyai = comm.bcast(hyai, root = 0)
     hybi = comm.bcast(hybi, root = 0)
+    longitude_corners = comm.bcast(longitude_corners, root = 0)
+    latitude_corners = comm.bcast(latitude_corners, root = 0)
 
     # Create the cams tree for searching later
     cams_xyz = np.c_[lonlat2xyz(cams_clon, cams_clat)]
     cams_tree = KDTree(cams_xyz)
 
-    (jc_loc_satellite, jb_loc_satellite, satellite_lons, satellite_lats, satellite_timestep, pavg0_sat, pw_sat, ak_sat, qa0_sat, cams_indices_sat, fracs_cams) = find_stations_satellite(satellite_lons, satellite_lats, obs_time_dts, tree, decomp_domain, clon, pavg0_sat, pw_sat, ak_sat, qa0_sat, cams_tree, accepted_distance)
+    # Create the icon polygon tree
+    tree_corners = STRtree(icon_polygons)
+
+    (jc_loc_satellite, jb_loc_satellite, satellite_lons, satellite_lats, satellite_timestep, pavg0_sat, pw_sat, ak_sat, qa0_sat, cams_indices_sat, fracs_cams, weights_sat) = find_stations_satellite(satellite_lons, satellite_lats, obs_time_dts, tree, decomp_domain, clon, pavg0_sat, pw_sat, ak_sat, qa0_sat, cams_tree, accepted_distance, longitude_corners, latitude_corners, tree_corners, icon_polygons)
    
     N_satellite_points = satellite_lons.shape[0] # Amount of satellite points in the local PE
 
@@ -465,8 +615,8 @@ def read_in_satellite_data(comm, tree, decomp_domain, clon, start_model, end_mod
     done_counter_sat = 0
 
     # Load all data into Dicts
-    keys_to_do = ['lon', 'lat', 'timestep', 'jc_loc', 'jb_loc', 'pavg0', 'pw', 'ak', 'qa0', 'cams_index', 'frac_cams', 'hyam', 'hybm', 'hyai', 'hybi']
-    values_to_do = [satellite_lons, satellite_lats, satellite_timestep, jc_loc_satellite, jb_loc_satellite, pavg0_sat, pw_sat, ak_sat, qa0_sat, cams_indices_sat, fracs_cams, hyam, hybm, hyai, hybi]
+    keys_to_do = ['lon', 'lat', 'timestep', 'jc_loc', 'jb_loc', 'pavg0', 'pw', 'ak', 'qa0', 'cams_index', 'frac_cams', 'hyam', 'hybm', 'hyai', 'hybi', 'weights']
+    values_to_do = [satellite_lons, satellite_lats, satellite_timestep, jc_loc_satellite, jb_loc_satellite, pavg0_sat, pw_sat, ak_sat, qa0_sat, cams_indices_sat, fracs_cams, hyam, hybm, hyai, hybi, weights_sat]
     local_data_to_do = {keys_to_do[i]:values_to_do[i] for i in range(len(keys_to_do))}
 
     keys_done = ['lon', 'lat', 'timestep', 'CH4', 'counter']
@@ -475,7 +625,7 @@ def read_in_satellite_data(comm, tree, decomp_domain, clon, start_model, end_mod
     
     return local_data_to_do, local_data_done, cams_files_dict # Return all of the Data in Dicts
 
-def read_in_satellite_data_cif(comm, tree, decomp_domain, clon, start_model, end_model, path_to_csv, number_of_cells, accepted_distance):
+def read_in_satellite_data_cif(comm, tree, decomp_domain, clon, start_model, end_model, path_to_csv, number_of_cells, accepted_distance, N_levels):
     """! Read in the satellite measurement points on each PE in the own domain and return all of the relevant data needed for computation as dictionaries
     @param comm                 MPI communicator containing all working PE's
     @param tree                 A tree with the cells in them that you can query
@@ -484,6 +634,9 @@ def read_in_satellite_data_cif(comm, tree, decomp_domain, clon, start_model, end
     @param path_to_csv          Path to the input csv file for the satellite data
     @param start_model          datetime object depicting the start datetime of the experiment
     @param end_model            datetime object depicting the end datetime of the experiment
+    @param number_of_cells      number of cells over which should be interpolated
+    @param accepted_distance    Float, value which distance should be accepted (in km). Just there to reject points that are very far away and lead to weird results
+    @param N_levels             number of levels that are in the model
     @return  Tuple of dicts that symbolize the data to do and the data done
     """
 
@@ -521,9 +674,7 @@ def read_in_satellite_data_cif(comm, tree, decomp_domain, clon, start_model, end
 
     (jc_loc_satellite, jb_loc_satellite, satellite_lons, satellite_lats, satellite_timestep, satellite_parameters, weights_all) = find_stations_satellite_cif(lons, lats, timesteps, parameters, tree, decomp_domain, clon, number_of_cells, accepted_distance)
    
-    # print(f"RANK [{comm.Get_rank()}] AFTER lons: {satellite_lons.shape}, AFTER lats: {satellite_lats.shape}, AFTER timesteps: {satellite_timestep.shape}, AFTER params: {satellite_parameters.shape}, jb_loc: {jb_loc_satellite.shape}, jc_loc: {jc_loc_satellite.shape}", file=sys.stderr)
     N_satellite_points = satellite_lons.shape[0] # Amount of satellite points in the local PE
-    N_levels = 60
     # Initialize all needed arrays as empty arrays of correct size
     done_lons_sat = np.empty(N_satellite_points, dtype=np.float64)
     done_lats_sat = np.empty(N_satellite_points, dtype=np.float64)
@@ -561,15 +712,15 @@ def update_cams(datetime, cams_files_dict, cams_prev_data=None, cams_next_data=N
     cams_next_data = xr.open_dataset(cams_files_dict[cams_next_time])
     return cams_prev_data, cams_next_data
 
-def tracking_CH4_satellite_cif_same_index(datetime, data_to_do, data_done, data_np, dict_vars, operations_dict):
-    """! Track the CH4 of the satellite measurements. It interpolates Move data that is done being measured to the data_done dictionary
+def tracking_satellite_cif_same_index(datetime, data_to_do, data_done, data_np, dict_vars, operations_dict, num_levels):
+    """! Track the data of the satellite measurements for cif. It interpolates horizontally using inverse distancing and vertically just taking the same vertical index as the neighboring columns. moves data that is done being measured to the data_done dictionary
     @param datetime             Current datetime (np.datetime object)
     @param data_to_do           The dictionary with the data that needs to be done
     @param data_done            The dictionary with the data that is done
-    @param CH4_EMIS_np          Numpy array with the current CH4 EMIS
-    @param CH4_BG_np            Numpy array with the current CH4 BG
-    @param pres_ifc_np          Numpy array with the current pressures on the interfaces (so the half levels)
-    @param pres_np              Numpy array with the current pressures
+    @param data_np              List of numpy arrays with the icon variable data
+    @param dict_vars            Dictionary with the variable data info
+    @param operations_dict      Dictionary with the operators
+    @param num_levels           The number of vertical levels in this simulation
     """
     if data_to_do['timestep'].size > 0: # Checks if there is still work to do
 
@@ -583,7 +734,6 @@ def tracking_CH4_satellite_cif_same_index(datetime, data_to_do, data_done, data_
             jb_ready_sat = data_to_do['jb_loc'][ready_mask]
 
             num_ready = np.sum(ready_mask)
-            num_levels = 60
 
             variables = data_to_do['parameter'][ready_mask]
             for i, variable in enumerate(variables):
@@ -595,10 +745,7 @@ def tracking_CH4_satellite_cif_same_index(datetime, data_to_do, data_done, data_
                 result = np.empty(num_levels, dtype = np.float64)
                 for sign, j in zip(dict_vars[variable]['signs'], range(1, len(list))):
                     ICON_profile = operations_dict[sign](ICON_profile, list[j][jc, :, jb, 0, 0] * dict_vars[variable]['factor'][i])
-                pres = (pres_np[jc, :, jb].squeeze()) / 1.e2
-                target_pres = pres_np[jc[0], :, jb[0]].squeeze()
                 for j in range(num_levels):
-                    this_target_pressure = target_pres[j]
                     result[j] = data_to_do['weights'][ready_mask][i][0] * ICON_profile[0, j]
 
                     for k in range(1, len(jb)):
@@ -628,14 +775,15 @@ def tracking_CH4_satellite_cif_same_index(datetime, data_to_do, data_done, data_
                 data_to_do[key] = data_to_do[key][keep_mask]
         
 
-def tracking_satellite_cif_pressures(datetime, data_to_do, data_done, data_np, dict_vars, operations_dict, pres_np):
-    """! Track the CH4 of the satellite measurements. It interpolates Move data that is done being measured to the data_done dictionary
+def tracking_satellite_cif_pressures(datetime, data_to_do, data_done, data_np, dict_vars, operations_dict, pres_np, num_levels):
+    """! Track the data of the satellite measurements for cif. It interpolates horizontally using inverse distancing and vertically by retrieving the pressure of the closest column and then linearly interpolating to this pressure. moves data that is done being measured to the data_done dictionary
     @param datetime             Current datetime (np.datetime object)
     @param data_to_do           The dictionary with the data that needs to be done
     @param data_done            The dictionary with the data that is done
-    @param CH4_EMIS_np          Numpy array with the current CH4 EMIS
-    @param CH4_BG_np            Numpy array with the current CH4 BG
-    @param pres_ifc_np          Numpy array with the current pressures on the interfaces (so the half levels)
+    @param data_np              List of numpy arrays with the icon variable data
+    @param dict_vars            Dictionary with the variable data info
+    @param operations_dict      Dictionary with the operators
+    @param num_levels           The number of vertical levels in this simulation
     @param pres_np              Numpy array with the current pressures
     """
     if data_to_do['timestep'].size > 0: # Checks if there is still work to do
@@ -650,50 +798,50 @@ def tracking_satellite_cif_pressures(datetime, data_to_do, data_done, data_np, d
             jb_ready_sat = data_to_do['jb_loc'][ready_mask]
 
             num_ready = np.sum(ready_mask)
-            num_levels = 60
 
             variables = data_to_do['parameter'][ready_mask]
-            for i, variable in enumerate(variables):
-                jc = jc_ready_sat[i]
-                jb = jb_ready_sat[i]
-                done_counter = data_done['counter']
-                list = data_np[variable]
-                ICON_profile = list[0][jc, :, jb, 0, 0] * dict_vars[variable]['factor'][0]
-                result = np.empty(num_levels, dtype = np.float64)
-                for sign, j in zip(dict_vars[variable]['signs'], range(1, len(list))):
-                    ICON_profile = operations_dict[sign](ICON_profile, list[j][jc, :, jb, 0, 0] * dict_vars[variable]['factor'][j])
-                pres = (pres_np[jc, :, jb].squeeze()) / 1.e2
-                target_pres = pres_np[jc[0], :, jb[0]].squeeze()
-                for j in range(num_levels):
-                    this_target_pressure = target_pres[j]
-                    result[j] = data_to_do['weights'][ready_mask][i][0] * ICON_profile[0, j]
+            for i in range(num_ready):
+                for variable in variables:
+                    jc = jc_ready_sat[i]
+                    jb = jb_ready_sat[i]
+                    done_counter = data_done['counter']
+                    list = data_np[variable]
+                    ICON_profile = list[0][jc, :, jb, 0, 0] * dict_vars[variable]['factor'][0]
+                    result = np.empty(num_levels, dtype = np.float64)
+                    for sign, j in zip(dict_vars[variable]['signs'], range(1, len(list))):
+                        ICON_profile = operations_dict[sign](ICON_profile, list[j][jc, :, jb, 0, 0] * dict_vars[variable]['factor'][j])
+                    pres = (pres_np[jc, :, jb].squeeze()) / 1.e2
+                    target_pres = pres_np[jc[0], :, jb[0]].squeeze()
+                    for j in range(num_levels):
+                        this_target_pressure = target_pres[j]
+                        result[j] = data_to_do['weights'][ready_mask][i][0] * ICON_profile[0, j]
 
-                    for k in range(1, len(jb)):
-                        best_index = int(np.argmin(np.abs(pres_np[jc[k], :, jb[k]] - this_target_pressure)))
+                        for k in range(1, len(jb)):
+                            best_index = int(np.argmin(np.abs(pres_np[jc[k], :, jb[k]] - this_target_pressure)))
 
-                        actual_pressure_closest = pres_np[jc[k], best_index, jb[k]]
-                        second_index = best_index
-                        # Second index is for height interpolation. depending on where the closest height is, compute the second index, also taking into consideration boundaries
-                        if actual_pressure_closest >= this_target_pressure and actual_pressure_closest != pres_np[jc[k], -1, jb[k]]:
-                            second_index += 1
-                        elif actual_pressure_closest < this_target_pressure and actual_pressure_closest != pres_np[jc[k], 0, jb[k]]:
-                            second_index -= 1
+                            actual_pressure_closest = pres_np[jc[k], best_index, jb[k]]
+                            second_index = best_index
+                            # Second index is for height interpolation. depending on where the closest height is, compute the second index, also taking into consideration boundaries
+                            if actual_pressure_closest >= this_target_pressure and actual_pressure_closest != pres_np[jc[k], -1, jb[k]]:
+                                second_index += 1
+                            elif actual_pressure_closest < this_target_pressure and actual_pressure_closest != pres_np[jc[k], 0, jb[k]]:
+                                second_index -= 1
 
-                        second_pres = pres_np[jc[k], second_index, jb[k]]
-                        vertical_weight = 0
-                        if second_pres - actual_pressure_closest != 0:
-                            vertical_weight = (this_target_pressure - actual_pressure_closest) / (second_pres - actual_pressure_closest)
+                            second_pres = pres_np[jc[k], second_index, jb[k]]
+                            vertical_weight = 0
+                            if second_pres - actual_pressure_closest != 0:
+                                vertical_weight = (this_target_pressure - actual_pressure_closest) / (second_pres - actual_pressure_closest)
 
-                        this_cell_interpolation_vertical = ICON_profile[k , best_index] + vertical_weight * (ICON_profile[k, second_index] - ICON_profile[k, best_index])
-                        result[j] += data_to_do['weights'][ready_mask][i][k] * this_cell_interpolation_vertical
+                            this_cell_interpolation_vertical = ICON_profile[k , best_index] + vertical_weight * (ICON_profile[k, second_index] - ICON_profile[k, best_index])
+                            result[j] += data_to_do['weights'][ready_mask][i][k] * this_cell_interpolation_vertical
 
-                # Repeat spatial info for each level
-                data_done['lon'][done_counter:done_counter + 1] = data_to_do['lon'][ready_mask][i]
-                data_done['lat'][done_counter:done_counter + 1] = data_to_do['lat'][ready_mask][i]
-                data_done['timestep'][done_counter:done_counter + 1] = data_to_do['timestep'][ready_mask][i]
-                data_done['measurement'][done_counter:done_counter + 1 , :] = result
-                data_done['parameter'][done_counter:done_counter + 1] = variable
-                data_done['counter'] += 1
+                    # Repeat spatial info for each level
+                    data_done['lon'][done_counter:done_counter + 1] = data_to_do['lon'][ready_mask][i]
+                    data_done['lat'][done_counter:done_counter + 1] = data_to_do['lat'][ready_mask][i]
+                    data_done['timestep'][done_counter:done_counter + 1] = data_to_do['timestep'][ready_mask][i]
+                    data_done['measurement'][done_counter:done_counter + 1 , :] = result
+                    data_done['parameter'][done_counter:done_counter + 1] = variable
+                    data_done['counter'] += 1
 
             
 
@@ -711,7 +859,7 @@ def tracking_satellite_cif_pressures(datetime, data_to_do, data_done, data_np, d
 
 
 def tracking_CH4_satellite(datetime, CH4_EMIS_np, CH4_BG_np, pres_ifc_np, pres_np, data_to_do, data_done, cams_prev_data, cams_next_data):
-    """! Track the CH4 of the satellite measurements. Move data that is done being measured to the data_done dictionary
+    """! Track the CH4 of the satellite measurements. Interpolate horizontally via the are covered by the observation, vertically via pressures and then linear interpolation. Then computes everything for the satellite observation value, to compare. Move data that is done being measured to the data_done dictionary
     @param datetime             Current datetime (np.datetime object)
     @param data_to_do           The dictionary with the data that needs to be done
     @param data_done            The dictionary with the data that is done
@@ -730,8 +878,8 @@ def tracking_CH4_satellite(datetime, CH4_EMIS_np, CH4_BG_np, pres_ifc_np, pres_n
 
         if np.any(ready_mask):
             # Filter arrays for ready stations
-            jc_ready_sat = data_to_do['jc_loc'][ready_mask]
-            jb_ready_sat = data_to_do['jb_loc'][ready_mask]
+            jc_ready_sat = data_to_do['jc_loc'][ready_mask, :]
+            jb_ready_sat = data_to_do['jb_loc'][ready_mask, :]
             frac_cams_ready = data_to_do['frac_cams'][ready_mask]
             frac_cams_ready = frac_cams_ready[:, np.newaxis]
             cams_indices_ready = data_to_do['cams_index'][ready_mask]
@@ -740,8 +888,9 @@ def tracking_CH4_satellite(datetime, CH4_EMIS_np, CH4_BG_np, pres_ifc_np, pres_n
             ## So there we turn everything around
             
             # Extract the pressure and CAMS data. For the CAMS data interpolate linearly between the 6 hour intervals
-            pb_mod = (pres_ifc_np[jc_ready_sat, :, jb_ready_sat].squeeze()) / 1.e2
-            pb_mod_mc =(pres_np[jc_ready_sat, :, jb_ready_sat].squeeze()) / 1.e2
+
+            pb_mod = (pres_ifc_np[jc_ready_sat[:, 0], :, jb_ready_sat[:, 0]].squeeze()) / 1.e2
+            pb_mod_mc =(pres_np[jc_ready_sat[:, 0], :, jb_ready_sat[:, 0]].squeeze()) / 1.e2
 
             cams_indices_ready = cams_indices_ready.flatten()
             CAMS_obs_prev = cams_prev_data["CH4"].isel(time=0, ncells = cams_indices_ready).values[::-1].T
@@ -767,12 +916,43 @@ def tracking_CH4_satellite(datetime, CH4_EMIS_np, CH4_BG_np, pres_ifc_np, pres_n
             CAMS_i_next =  (hyai_new_axis + hybi_new_axis * CAMS_aps_next_reshaped) / 1.e2
             CAMS_interfaces = (1. - frac_cams_ready) * CAMS_i_prev + frac_cams_ready * CAMS_i_next
         
-            # Extract the ICON CH4 profile, multiplying by 1e9 for the correct unit (ppb)
-            ICON_profile = (
-                (Mda / MCH4) * CH4_BG_np[jc_ready_sat, :, jb_ready_sat].squeeze() \
-                + 1.e9 * (Mda / MCH4) * CH4_EMIS_np[jc_ready_sat, :, jb_ready_sat].squeeze()
-            )
-            ICON_profile = np.squeeze(ICON_profile)
+            num_ready = np.sum(ready_mask)
+            num_levels = len(CH4_BG_np[0, :, 0].squeeze())
+            ICON_profile = np.empty((num_ready, num_levels), dtype = np.float64)
+            for i in range(num_ready):
+                    jc = jc_ready_sat[i, :]
+                    jb = jb_ready_sat[i, :]
+                    profiles = (
+                        (Mda / MCH4) * CH4_BG_np[jc, :, jb].squeeze() \
+                        + 1.e9 * (Mda / MCH4) * CH4_EMIS_np[jc, :, jb].squeeze()
+                    )
+                
+                    result = np.empty(num_levels, dtype = np.float64)
+                    pres = (pres_np[jc, :, jb].squeeze()) / 1.e2
+                    target_pres = pres_np[jc[0], :, jb[0]].squeeze()
+                    for j in range(num_levels):
+                        this_target_pressure = target_pres[j]
+                        result[j] = data_to_do['weights'][ready_mask][i, 0] * profiles[0, j]
+
+                        for k in range(1, len(jb)):
+                            best_index = int(np.argmin(np.abs(pres_np[jc[k], :, jb[k]] - this_target_pressure)))
+
+                            actual_pressure_closest = pres_np[jc[k], best_index, jb[k]]
+                            second_index = best_index
+                            # Second index is for vertical interpolation. depending on where the closest pressure is, compute the second index, also taking into consideration boundaries
+                            if actual_pressure_closest >= this_target_pressure and actual_pressure_closest != pres_np[jc[k], -1, jb[k]]:
+                                second_index += 1
+                            elif actual_pressure_closest < this_target_pressure and actual_pressure_closest != pres_np[jc[k], 0, jb[k]]:
+                                second_index -= 1
+
+                            second_pres = pres_np[jc[k], second_index, jb[k]]
+                            vertical_weight = 0
+                            if second_pres - actual_pressure_closest != 0:
+                                vertical_weight = (this_target_pressure - actual_pressure_closest) / (second_pres - actual_pressure_closest)
+
+                            this_cell_interpolation_vertical = profiles[k , best_index] + vertical_weight * (profiles[k, second_index] - profiles[k, best_index])
+                            result[j] += data_to_do['weights'][ready_mask][i][k] * this_cell_interpolation_vertical
+                    ICON_profile[i, :] = result
             
             # Linearly interpolate the CAMS data to the current timestep, as CAMS data is only every 6 hours
             CAMS_obs = (1. - frac_cams_ready) * CAMS_obs_prev + frac_cams_ready * CAMS_obs_next
@@ -797,6 +977,7 @@ def tracking_CH4_satellite(datetime, CH4_EMIS_np, CH4_BG_np, pres_ifc_np, pres_n
             pb_cams = np.atleast_2d(pb_cams)
             pb_mod_mc = np.atleast_2d(pb_mod_mc)
             pb_cams_mc = np.atleast_2d(pb_cams_mc)
+            
             tracer_profile = np.array([
                 np.concatenate([CAMS_profile[i], ICON_profile[i]])
                 for i in range(len(CAMS_profile))
@@ -816,10 +997,11 @@ def tracking_CH4_satellite(datetime, CH4_EMIS_np, CH4_BG_np, pres_ifc_np, pres_n
             # Also the computation afterwards is based on Michael Steiners computation
             pb_ret = data_to_do['pavg0'][ready_mask]
             coef_matrix = []
-            pb_ret = pb_ret[:, ::-1]
+            # pb_ret = pb_ret[:, ::-1]
             pb_profile = pb_profile[:, ::-1]
             tracer_profile = tracer_profile[:, ::-1]
             for i in range(pb_ret.shape[0]):
+                print(f"pb_ret.shape: {pb_ret[i].shape}, pb_profile.shape: {pb_profile[i].shape}, pb_ret: {pb_ret[i]}, pb_profile: {pb_profile[i]}", file=sys.stderr)
                 coefs = get_int_coefs(pb_ret[i], pb_profile[i])
 
                 coef_matrix.append(coefs)
@@ -827,11 +1009,11 @@ def tracking_CH4_satellite(datetime, CH4_EMIS_np, CH4_BG_np, pres_ifc_np, pres_n
             coef_matrix = np.array(coef_matrix)
 
             pwf = data_to_do['pw'][ready_mask]
-            pwf = pwf[:, ::-1]
+            # pwf = pwf[:, ::-1]
             averaging_kernel = data_to_do['ak'][ready_mask]
-            averaging_kernel = averaging_kernel[:, ::-1]
+            # averaging_kernel = averaging_kernel[:, ::-1]
             important_stuff = data_to_do['qa0'][ready_mask]
-            important_stuff = important_stuff[:, ::-1]
+            # important_stuff = important_stuff[:, ::-1]
             avpw = pwf * averaging_kernel
             prior_col = np.sum(pwf * important_stuff, axis=1)
 
@@ -857,9 +1039,8 @@ def tracking_CH4_satellite(datetime, CH4_EMIS_np, CH4_BG_np, pres_ifc_np, pres_n
             keys_to_filter = [
                 'lon', 'lat', 'timestep',
                 'jc_loc', 'jb_loc', 'pavg0',
-                'qa0', 'pw', 'ak', 'cams_index', 'frac_cams'
+                'qa0', 'pw', 'ak', 'cams_index', 'frac_cams', 'weights'
             ]
-
-            for key in keys_to_filter:
+            for key in keys_to_filter: 
                 data_to_do[key] = data_to_do[key][keep_mask]
         

@@ -198,7 +198,7 @@ def data_constructor():
 def stations_init():
     """! Initialization: Get data and preprocess all of the data
     """
-    global number_of_timesteps, clon, hhl, decomp_domain, tree # variables with domain info, and general information
+    global number_of_timesteps, clon, hhl, decomp_domain, tree, num_levels # variables with domain info, and general information
     # All of the monitoring variables
     global cams_files_dict, data, data_satellite_to_do, data_satellite_done, data_monitoring_stations_to_do, data_monitoring_stations_done, dict_vars, data_sat_cif_to_do, data_sat_cif_done, data_stations_cif_to_do, data_stations_cif_done
     global dict_vars_cif_sat, dict_vars_cif_stations
@@ -217,10 +217,8 @@ def stations_init():
     datetime_np = pd.to_datetime(datetime)
 
     simulation_interval = comin.descrdata_get_simulation_interval()
-    # exp_start = simulation_interval.exp_start 
-    # exp_stop = simulation_interval.exp_stop
-    # exp_start = pd.to_datetime(exp_start)
-    # exp_stop = pd.to_datetime(exp_stop)
+    # exp_start = pd.to_datetime(simulation_interval.exp_start)
+    # exp_stop = pd.to_datetime(simulation_interval.exp_stop)
     run_start = pd.to_datetime(simulation_interval.run_start)
     run_stop = pd.to_datetime(simulation_interval.run_stop)
     # All arrays are for domain 1 only
@@ -230,13 +228,31 @@ def stations_init():
     clat = np.asarray(domain.cells.clat)
     hhl = np.asarray(domain.cells.hhl)
     decomp_domain = np.asarray(domain.cells.decomp_domain)
+    vertex_idx = np.asarray(domain.cells.vertex_idx)
+    vertex_blk = np.asarray(domain.cells.vertex_blk)
+    vlon = np.asarray(domain.verts.vlon)
+    vlat = np.asarray(domain.verts.vlat)
+    num_levels = domain.nlev
+    icon_polygons = []
 
+    for i in range(clon.shape[0]):
+        for j in range(clon.shape[1]):
+            coords = []
+            for k in range(3):
+                    idx = vertex_idx[i, j, k] - 1 # - 1 because fortran indexing starts at 1 and not at 0
+                    blk = vertex_blk[i, j, k] - 1
+                    if idx == -1 and blk == -1:
+                        message(f"Please investigate this cell. It could be interesting: i: {i}, j: {j}, k: {k}, idx: {idx}, blk: {blk}", msgrank)
+                        # continue
+                    message(f"i: {i}, j: {j}, k: {k}, idx: {idx}, blk: {blk}, vlon shape: {vlon.shape}, vlat.shape: {vlat.shape}", msgrank)
+                    lon = vlon[idx, blk]
+                    lat = vlat[idx, blk]
+                    coords.append((lon, lat))
+            icon_polygons.append(Polygon(coords))
+    
     # Convert the longitude latitude data to xyz data for the KDTree
     xyz = np.c_[lonlat2xyz(clon.ravel(),clat.ravel())]
     tree = KDTree(xyz) # Create the KDTree, composed of the xyz data
-
-    # coords_rad = np.deg2rad(np.c_[clat.ravel(), clon.ravel()])
-    # tree = BallTree(coords_rad, metric='haversine')
 
     # Get all of the monitoring stations and save all of the relevant data
     if(do_monitoring_stations):
@@ -246,13 +262,13 @@ def stations_init():
 
     if(do_satellite):
         message("Now reading in and locating the correct indices for the satellite data", msgrank)
-        data_satellite_to_do, data_satellite_done, cams_files_dict = read_in_satellite_data(comm, tree, decomp_domain, clon, run_start, run_stop, tropomi_filename, cams_base_path, cams_params_file, accepted_distance)
+        data_satellite_to_do, data_satellite_done, cams_files_dict = read_in_satellite_data(comm, tree, decomp_domain, clon, run_start, run_stop, tropomi_filename, cams_base_path, cams_params_file, accepted_distance, icon_polygons)
         write_header_sat(comm, file_name_output_sat)
 
     if(do_satellite_cif):
         message("Now reading in and locating the correct indices for the cif satellite data", msgrank)
         data_sat_cif_to_do, data_sat_cif_done = read_in_satellite_data_cif(comm, tree, decomp_domain, clon, run_start, run_stop, path_to_input_sat_cif, NUMBER_OF_NN, accepted_distance)
-        write_header_sat_cif(comm, dict_vars_cif_sat, file_name_output_sat_cif)
+        write_header_sat_cif(comm, file_name_output_sat_cif, num_levels)
     if(do_stations_cif):
         message("Now reading in and locating the correct indices for the cif station data", msgrank)
         data_stations_cif_to_do, data_stations_cif_done = read_in_points_cif(comm, tree, decomp_domain, clon, hhl, NUMBER_OF_NN,path_to_input_stations_cif, run_start, run_stop, dict_vars_cif_stations, accepted_distance)
@@ -326,7 +342,7 @@ def tracking():
     if do_satellite:
         tracking_CH4_satellite(datetime, CH4_EMIS_np, CH4_BG_np, pres_ifc_np, pres_np, data_satellite_to_do, data_satellite_done, cams_prev_data, cams_next_data)
     if do_satellite_cif:
-        tracking_satellite_cif_pressures(datetime, data_sat_cif_to_do, data_sat_cif_done, data_np_sat_cif, dict_vars_cif_sat, operations_dict, pres_np)
+        tracking_satellite_cif_pressures(datetime, data_sat_cif_to_do, data_sat_cif_done, data_np_sat_cif, dict_vars_cif_sat, operations_dict, pres_np, num_levels)
     if do_stations_cif:
         tracking_points_cif(datetime, data_stations_cif_to_do, data_stations_cif_done, data_np_stations_cif, dict_vars_cif_stations, operations_dict)
         
@@ -339,7 +355,7 @@ def tracking():
         if do_satellite:
             write_satellite(comm, data_satellite_done, file_name_output_sat)
         if do_satellite_cif:
-            write_satellite_cif(comm, data_sat_cif_done, dict_vars_cif_sat, file_name_output_sat_cif)
+            write_satellite_cif(comm, data_sat_cif_done, file_name_output_sat_cif)
         if do_stations_cif:
             write_points_cif(comm, data_stations_cif_done, dict_vars_cif_stations, file_name_output_stations_cif)
 

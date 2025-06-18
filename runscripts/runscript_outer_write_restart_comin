@@ -492,5 +492,6 @@ spack load py-mpi4py
 spack load py-netcdf4
 spack load py-pyyaml
 spack load py-scikit-learn
+spack load py-shapely
 
 srun ./icon.exe

@@ -34,13 +34,13 @@ dict_vars_cif_stations:
     unit: "ppb"
     long_name: "CH4 concentration"
 
-do_monitoring_stations: true
+do_monitoring_stations: false
 do_satellite: true
-do_satellite_cif: true
-do_stations_cif: true
+do_satellite_cif: false
+do_stations_cif: false
 
 plugin_dir: "/capstor/scratch/cscs/zhug/Romania6km/python-zeno"
-tropomi_filename: "/capstor/scratch/cscs/zhug/Romania6km/input/TROPOMI/TROPOMI_SRON_prs_flipped_20190101_20191231.nc"
+tropomi_filename: "/capstor/scratch/cscs/zhug/Romania6km/input/TROPOMI/TROPOMI_SRON_corners_20190101_20191231.nc"
 cams_base_path: "/capstor/scratch/cscs/zhug/Romania6km/input/CAMS/LBC/"
 cams_params_file: "/capstor/scratch/cscs/zhug/Romania6km/input/CAMS/cams73_v22r2_ch4_conc_surface_inst_201910.nc"
 path_to_input_nc: "/capstor/scratch/cscs/zhug/Romania6km/input/empty_output_file/input.nc"
