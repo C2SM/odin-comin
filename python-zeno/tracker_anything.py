@@ -267,7 +267,7 @@ def stations_init():
 
     if(do_satellite_cif):
         message("Now reading in and locating the correct indices for the cif satellite data", msgrank)
-        data_sat_cif_to_do, data_sat_cif_done = read_in_satellite_data_cif(comm, tree, decomp_domain, clon, run_start, run_stop, path_to_input_sat_cif, NUMBER_OF_NN, accepted_distance)
+        data_sat_cif_to_do, data_sat_cif_done = read_in_satellite_data_cif(comm, tree, decomp_domain, clon, run_start, run_stop, path_to_input_sat_cif, NUMBER_OF_NN, accepted_distance, num_levels)
         write_header_sat_cif(comm, file_name_output_sat_cif, num_levels)
     if(do_stations_cif):
         message("Now reading in and locating the correct indices for the cif station data", msgrank)

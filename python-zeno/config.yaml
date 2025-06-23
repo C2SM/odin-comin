@@ -25,6 +25,12 @@ dict_vars_cif_sat:
     factor: [1.0e9, 1.0]
     unit: "ppb"
     long_name: "CH4 concentration"
+  Temp:
+    var_names: ["temp"]
+    signs: []
+    factor: [1]
+    unit: "Kelvin"
+    long_name: "Temperature"
 
 dict_vars_cif_stations:
   CH4:
@@ -33,6 +39,12 @@ dict_vars_cif_stations:
     factor: [1.0e9, 1.0]
     unit: "ppb"
     long_name: "CH4 concentration"
+  Temp:
+    var_names: ["temp"]
+    signs: []
+    factor: [1]
+    unit: "Kelvin"
+    long_name: "Temperature"
 
 do_monitoring_stations: false
 do_satellite: true
