@@ -28,6 +28,109 @@ from netCDF4 import Dataset
 import pandas as pd
 import sys
 
+class StationDataToDoCIF:
+    def __init__(self, lon, lat, elevation, sampling_height, sampling_strategy, jc_loc, jb_loc, vertical_index1, vertical_index2, vertical_weight, horizontal_weight, number_of_steps, id, stime, etime, parameter, obs):
+        self.lon = lon
+        self.lat = lat
+        self.elevation = elevation
+        self.sampling_height = sampling_height
+        self.sampling_strategy = sampling_strategy
+        self.jc_loc = jc_loc
+        self.jb_loc = jb_loc
+        self.vertical_index1 = vertical_index1
+        self.vertical_index2 = vertical_index2
+        self.vertical_weight = vertical_weight
+        self.horizontal_weight = horizontal_weight
+        self.number_of_steps = number_of_steps
+        self.id = id
+        self.stime = stime
+        self.etime = etime
+        self.parameter = parameter
+        self.obs = obs
+
+    # def filter_ready(self, current_time):
+    #     mask = self.timestep <= np.datetime64(current_time)
+    #     return mask
+
+    def apply_mask(self, mask):
+        for key in vars(self):
+            value = getattr(self, key)
+            if isinstance(value, np.ndarray) and value.shape[0] == mask.shape[0]:
+                setattr(self, key, value[mask])
+
+class StationDataToDo:
+    def __init__(self, lon, lat, elevation, sampling_height, sampling_strategy, jc_loc, jb_loc, vertical_index1, vertical_index2, vertical_weight, horizontal_weight, number_of_steps, id, stime, etime, dict_vars):
+        self.lon = lon
+        self.lat = lat
+        self.elevation = elevation
+        self.sampling_height = sampling_height
+        self.sampling_strategy = sampling_strategy
+        self.jc_loc = jc_loc
+        self.jb_loc = jb_loc
+        self.vertical_index1 = vertical_index1
+        self.vertical_index2 = vertical_index2
+        self.vertical_weight = vertical_weight
+        self.horizontal_weight = horizontal_weight
+        self.number_of_steps = number_of_steps
+        self.id = id
+        self.stime = stime
+        self.etime = etime
+        self.dict_measurement = {}
+        for variable in dict_vars:
+            self.dict_measurement[variable] = np.zeros(lon.shape, dtype=np.float64)
+
+    # def filter_ready(self, current_time):
+    #     mask = self.timestep <= np.datetime64(current_time)
+    #     return mask
+
+    def apply_mask(self, mask):
+        for key in vars(self):
+            value = getattr(self, key)
+            if isinstance(value, np.ndarray) and value.shape[0] == mask.shape[0]:
+                setattr(self, key, value[mask])
+    
+class StationDataDoneCIF:
+    def __init__(self, lon, lat, elevation, sampling_height, sampling_strategy, stime, etime, counter, id, parameter, obs):
+        self.lon = lon
+        self.lat = lat
+        self.elevation = elevation
+        self.sampling_height = sampling_height
+        self.sampling_strategy = sampling_strategy
+        self.stime = stime
+        self.etime = etime
+        self.counter = counter
+        self.id = id
+        self.parameter = parameter
+        self.obs = obs
+
+    def apply_mask(self, mask):
+        for key in vars(self):
+            value = getattr(self, key)
+            if isinstance(value, np.ndarray) and value.shape[0] == mask.shape[0]:
+                setattr(self, key, value[mask])
+
+class StationDataDone:
+    def __init__(self, lon, lat, elevation, sampling_height, sampling_strategy, stime, etime, counter, id, dict_vars):
+        self.lon = lon
+        self.lat = lat
+        self.elevation = elevation
+        self.sampling_height = sampling_height
+        self.sampling_strategy = sampling_strategy
+        self.stime = stime
+        self.etime = etime
+        self.counter = counter
+        self.id = id
+        self.dict_measurement = {}
+        for variable in dict_vars:
+            self.dict_measurement[variable] = np.zeros(lon.shape, dtype=np.float64)
+
+    def apply_mask(self, mask):
+        for key in vars(self):
+            value = getattr(self, key)
+            if isinstance(value, np.ndarray) and value.shape[0] == mask.shape[0]:
+                setattr(self, key, value[mask])
+
+
 # Functions
 def datetime64_to_days_since_1970(arr):
     """! Converts datetime 64 to days since 1970
@@ -352,28 +455,27 @@ def find_points(lons, lats, sampling_heights, sampling_elevations, sampling_stra
             np.array(timesteps_local_begin), 
             np.array(timesteps_local_end))
 
-def write_points_cif(comm, data_done, dict_vars, file_name_output):
+def write_points_cif(comm, data_done: StationDataDoneCIF, file_name_output):
     """!Function to write surface monitoring data for cif to output nc file using preallocated arrays with a counter.
     @param comm                 MPI communicator containing all working PE's
     @param data_done            Dictionary with the data that is done
-    @param dict_vars            Dictionary with the variable info, user defined
     @param file_name_output     Filename of the output nc file. Expects the header of the nc file to be written already
     """
-    done_counter = data_done['counter']
+    done_counter = data_done.counter
     done_data_local = None
     if done_counter > 0:
 
         done_data_local = {
-            "site_name": data_done['id'][:done_counter],
-            "longitude": data_done['lon'][:done_counter],
-            "latitude": data_done['lat'][:done_counter],
-            "elevation": data_done['elevation'][:done_counter],
-            "sampling_height": data_done['sampling_height'][:done_counter],
-            "sampling_strategy": data_done['sampling_strategy'][:done_counter],
-            "stime": data_done['stime'][:done_counter],
-            "etime": data_done['etime'][:done_counter],
-            "parameter": data_done['parameter'][:done_counter],
-            "observation": data_done['obs'][:done_counter],
+            "site_name": data_done.id[:done_counter],
+            "longitude": data_done.lon[:done_counter],
+            "latitude": data_done.lat[:done_counter],
+            "elevation": data_done.elevation[:done_counter],
+            "sampling_height": data_done.sampling_height[:done_counter],
+            "sampling_strategy": data_done.sampling_strategy[:done_counter],
+            "stime": data_done.stime[:done_counter],
+            "etime": data_done.etime[:done_counter],
+            "parameter": data_done.parameter[:done_counter],
+            "observation": data_done.obs[:done_counter],
         }
 
     gathered_done_data = comm.gather(done_data_local, root=0)
@@ -419,32 +521,32 @@ def write_points_cif(comm, data_done, dict_vars, file_name_output):
             ncfile.close()
             
 
-    data_done['counter'] = 0
+    data_done.counter = 0
 
-def write_points(comm, data_done, dict_vars, file_name_output):
+def write_points(comm, data_done: StationDataDone, dict_vars, file_name_output):
     """!Function to write stationary monitoring data to output nc file using preallocated arrays with a counter.
     @param comm                 MPI communicator containing all working PE's
     @param data_done            Dictionary with the data that is done
     @param dict_vars            Dictionary with the variable info, user defined
     @param file_name_output     Filename of the output nc file. Expects the header of the nc file to be written already
     """
-    done_counter = data_done['counter']
+    done_counter = data_done.counter
     done_data_local = None
     if done_counter > 0:
 
         done_data_local = {
-            "site_name": data_done['id'][:done_counter],
-            "longitude": data_done['lon'][:done_counter],
-            "latitude": data_done['lat'][:done_counter],
-            "elevation": data_done['elevation'][:done_counter],
-            "sampling_height": data_done['sampling_height'][:done_counter],
-            "sampling_strategy": data_done['sampling_strategy'][:done_counter],
-            "stime": data_done['stime'][:done_counter],
-            "etime": data_done['etime'][:done_counter],
+            "site_name": data_done.id[:done_counter],
+            "longitude": data_done.lon[:done_counter],
+            "latitude": data_done.lat[:done_counter],
+            "elevation": data_done.elevation[:done_counter],
+            "sampling_height": data_done.sampling_height[:done_counter],
+            "sampling_strategy": data_done.sampling_strategy[:done_counter],
+            "stime": data_done.stime[:done_counter],
+            "etime": data_done.etime[:done_counter],
         }
 
         for variable in dict_vars:
-            done_data_local[variable] = data_done[variable][:done_counter]
+            done_data_local[variable] = data_done.dict_measurement[variable][:done_counter]
 
     gathered_done_data = comm.gather(done_data_local, root=0)
 
@@ -489,7 +591,7 @@ def write_points(comm, data_done, dict_vars, file_name_output):
             ncfile.close()
             
 
-    data_done['counter'] = 0
+    data_done.counter = 0
 
 def write_header_points_cif(comm, file_name):
     """!Function to write the header for the cif surface monitoring data output nc file
@@ -718,19 +820,25 @@ def read_in_points(comm, tree, decomp_domain, clon, hhl, number_of_NN, path_to_f
 
     # Create Dicts with all of the data needed
     number_of_timesteps = np.zeros(N_points, dtype=np.int32)
-    keys = ['lon', 'lat','elevation', 'sampling_height', 'sampling_strategy', 'jc_loc', 'jb_loc', 'vertical_index1', 'vertical_index2', 'vertical_weight', 'horizontal_weight', 'number_of_steps', 'id', 'stime', 'etime']
-    values = [lons, lats, elevations, sampling_heights, sampling_strategies, jc_loc, jb_loc, vertical_indices_nearest, vertical_indices_second, vertical_weights, horizontal_weights, number_of_timesteps, ids, stimes, etimes]
-    data = {keys[i]:values[i] for i in range(len(keys))}
+    # keys = ['lon', 'lat','elevation', 'sampling_height', 'sampling_strategy', 'jc_loc', 'jb_loc', 'vertical_index1', 'vertical_index2', 'vertical_weight', 'horizontal_weight', 'number_of_steps', 'id', 'stime', 'etime']
+    # values = [lons, lats, elevations, sampling_heights, sampling_strategies, jc_loc, jb_loc, vertical_indices_nearest, vertical_indices_second, vertical_weights, horizontal_weights, number_of_timesteps, ids, stimes, etimes]
+    # data = {keys[i]:values[i] for i in range(len(keys))}
 
-    keys_done = ['lon', 'lat', 'elevation', 'sampling_height', 'sampling_strategy', 'stime', 'etime', 'counter', 'id']
-    values_done = [done_lons, done_lats, done_elevations, done_sampling_heights, done_sampling_strategies, done_stimes, done_etimes, done_counter, done_site_names]
-    data_done = {keys_done[i]:values_done[i] for i in range(len(keys_done))}
+    data_to_do = StationDataToDo(lons, lats, elevations, sampling_heights, sampling_strategies, jc_loc, jb_loc, vertical_indices_nearest, vertical_indices_second, vertical_weights, horizontal_weights, number_of_timesteps, ids, stimes, etimes, data_vars)
 
-    for variable in data_vars:
-        data[variable] = np.zeros(lons.shape, dtype=np.float64)
-        data_done[variable] = np.empty(N_points, dtype=np.float64)
 
-    return data, data_done # Return the dicts with the data
+    # keys_done = ['lon', 'lat', 'elevation', 'sampling_height', 'sampling_strategy', 'stime', 'etime', 'counter', 'id']
+    # values_done = [done_lons, done_lats, done_elevations, done_sampling_heights, done_sampling_strategies, done_stimes, done_etimes, done_counter, done_site_names]
+    # data_done = {keys_done[i]:values_done[i] for i in range(len(keys_done))}
+
+    data_done = StationDataDone(done_lons, done_lats, done_elevations, done_sampling_heights, done_sampling_strategies, done_stimes, done_etimes, done_counter, done_site_names, data_vars)
+
+
+    # for variable in data_vars:
+    #     data[variable] = np.zeros(lons.shape, dtype=np.float64)
+    #     data_done[variable] = np.empty(N_points, dtype=np.float64)
+
+    return data_to_do, data_done # Return the data
 
 
 def read_in_points_cif(comm, tree, decomp_domain, clon, hhl, number_of_NN, path_to_file, start_model, end_model, data_vars, accepted_distance):
@@ -823,17 +931,21 @@ def read_in_points_cif(comm, tree, decomp_domain, clon, hhl, number_of_NN, path_
 
     # Create Dicts with all of the data needed
     number_of_timesteps = np.zeros(N_points, dtype=np.int32)
-    keys = ['lon', 'lat','elevation', 'sampling_height', 'sampling_strategy', 'jc_loc', 'jb_loc', 'vertical_index1', 'vertical_index2', 'vertical_weight', 'horizontal_weight', 'number_of_steps', 'id', 'stime', 'etime', 'parameter', 'obs']
-    values = [lons, lats, elevations, sampling_heights, sampling_strategies, jc_loc, jb_loc, vertical_indices_nearest, vertical_indices_second, vertical_weights, horizontal_weights, number_of_timesteps, ids, stimes, etimes, parameters, obs]
-    data = {keys[i]:values[i] for i in range(len(keys))}
+    # keys = ['lon', 'lat','elevation', 'sampling_height', 'sampling_strategy', 'jc_loc', 'jb_loc', 'vertical_index1', 'vertical_index2', 'vertical_weight', 'horizontal_weight', 'number_of_steps', 'id', 'stime', 'etime', 'parameter', 'obs']
+    # values = [lons, lats, elevations, sampling_heights, sampling_strategies, jc_loc, jb_loc, vertical_indices_nearest, vertical_indices_second, vertical_weights, horizontal_weights, number_of_timesteps, ids, stimes, etimes, parameters, obs]
+    # data = {keys[i]:values[i] for i in range(len(keys))}
+
+    data_to_do = StationDataToDoCIF(lons, lats, elevations, sampling_heights, sampling_strategies, jc_loc, jb_loc, vertical_indices_nearest, vertical_indices_second, vertical_weights, horizontal_weights, number_of_timesteps, ids, stimes, etimes, parameters, obs)
 
     keys_done = ['lon', 'lat', 'elevation', 'sampling_height', 'sampling_strategy', 'stime', 'etime', 'counter', 'id', 'parameter', 'obs']
     values_done = [done_lons, done_lats, done_elevations, done_sampling_heights, done_sampling_strategies, done_stimes, done_etimes, done_counter, done_site_names, done_parameters, done_obs]
     data_done = {keys_done[i]:values_done[i] for i in range(len(keys_done))}
+    
+    data_done = StationDataDoneCIF(done_lons, done_lats, done_elevations, done_sampling_heights, done_sampling_strategies, done_stimes, done_etimes, done_counter, done_site_names, done_parameters, done_obs)
 
-    return data, data_done # Return the dicts with the data
+    return data_to_do, data_done # Return the dicts with the data
 
-def tracking_points(datetime, data_to_do, data_done, data_np, dict_vars, operations_dict):
+def tracking_points(datetime, data_to_do: StationDataToDo, data_done: StationDataDone, data_np, dict_vars, operations_dict):
     """! Track the chosen variables on the chosen locations and times. Move data that is done being measured to the data_done dictionary
     @param datetime             Current datetime (np.datetime object)
     @param data_to_do           The dictionary with the data that needs to be done
@@ -842,25 +954,25 @@ def tracking_points(datetime, data_to_do, data_done, data_np, dict_vars, operati
     @param dict_vars            Dictionary containing the variables, user defined
     @param operations_dict      Dictionary mapping the names of the signs field in the previous dict to operator. objects
     """
-    if data_to_do['lon'].size > 0: # Checks if there is still work to do
+    if data_to_do.lon.size > 0: # Checks if there is still work to do
         
         model_time_np = np.datetime64(datetime)
         # mask to mask out the stations, where the model time is in the hour before the output of the measurement. They are ready for measurement
         measuring_mask = (
-            (((data_to_do['sampling_strategy'] == 1) | (data_to_do['sampling_strategy'] == 2)) &
-            (data_to_do['stime'] <= model_time_np) & 
-            (data_to_do['etime'] >= model_time_np)) |
-            (((data_to_do['sampling_strategy'] == 3) | (data_to_do['sampling_strategy'] == 4)) &
-            (data_to_do['etime'] <= model_time_np))
+            (((data_to_do.sampling_strategy == 1) | (data_to_do.sampling_strategy == 2)) &
+            (data_to_do.stime <= model_time_np) & 
+            (data_to_do.etime >= model_time_np)) |
+            (((data_to_do.sampling_strategy == 3) | (data_to_do.sampling_strategy == 4)) &
+            (data_to_do.etime <= model_time_np))
         )
         if np.any(measuring_mask):
             # Filter arrays for ready stations
-            jc_ready = data_to_do['jc_loc'][measuring_mask]
-            jb_ready = data_to_do['jb_loc'][measuring_mask]
-            vi_ready1 = data_to_do['vertical_index1'][measuring_mask]
-            vi_ready2 = data_to_do['vertical_index2'][measuring_mask]
-            weights_vertical_ready = data_to_do['vertical_weight'][measuring_mask]
-            weights_ready = data_to_do['horizontal_weight'][measuring_mask]
+            jc_ready = data_to_do.jc_loc[measuring_mask]
+            jb_ready = data_to_do.jb_loc[measuring_mask]
+            vi_ready1 = data_to_do.vertical_index1[measuring_mask]
+            vi_ready2 = data_to_do.vertical_index2[measuring_mask]
+            weights_vertical_ready = data_to_do.vertical_weight[measuring_mask]
+            weights_ready = data_to_do.horizontal_weight[measuring_mask]
             
             # For each variable make the computation specified by the dict_vars
             for variable, list in data_np.items():
@@ -875,44 +987,41 @@ def tracking_points(datetime, data_to_do, data_done, data_np, dict_vars, operati
 
                 # Do the horizontal interpolation
                 if weights_ready.size > 0 and monitoring_combined.size > 0:
-                    data_to_do[variable][measuring_mask] += np.sum(weights_ready * monitoring_combined, axis=1)
+                    data_to_do.dict_measurement[variable][measuring_mask] += np.sum(weights_ready * monitoring_combined, axis=1)
             
-            data_to_do['number_of_steps'][measuring_mask] += 1
+            data_to_do.number_of_steps[measuring_mask] += 1
 
 
-        done_mask = data_to_do['etime'] <= model_time_np # This data is done being monitored and can be output
-        done_counter = data_done['counter']
+        done_mask = data_to_do.etime <= model_time_np # This data is done being monitored and can be output
+        done_counter = data_done.counter
         num_ready = np.sum(done_mask) # Count how many points are done
         if num_ready > 0:
         # Add all of the done points to the done arrays
-            keys_done = ['lon', 'lat', 'elevation', 'sampling_height', 'sampling_strategy', 'stime', 'etime', 'counter', 'id']
-            data_done['lon'][done_counter:done_counter + num_ready] = data_to_do['lon'][done_mask]
-            data_done['lat'][done_counter:done_counter + num_ready] = data_to_do['lat'][done_mask]
-            data_done['elevation'][done_counter:done_counter + num_ready] = data_to_do['elevation'][done_mask]
-            data_done['sampling_height'][done_counter:done_counter + num_ready] = data_to_do['sampling_height'][done_mask]
-            data_done['sampling_strategy'][done_counter:done_counter + num_ready] = data_to_do['sampling_strategy'][done_mask]
-            data_done['stime'][done_counter:done_counter + num_ready] = data_to_do['stime'][done_mask]
-            data_done['etime'][done_counter:done_counter + num_ready] = data_to_do['etime'][done_mask]
-            data_done['id'][done_counter:done_counter + num_ready] = data_to_do['id'][done_mask]
+            data_done.lon[done_counter:done_counter + num_ready] = data_to_do.lon[done_mask]
+            data_done.lat[done_counter:done_counter + num_ready] = data_to_do.lat[done_mask]
+            data_done.elevation[done_counter:done_counter + num_ready] = data_to_do.elevation[done_mask]
+            data_done.sampling_height[done_counter:done_counter + num_ready] = data_to_do.sampling_height[done_mask]
+            data_done.sampling_strategy[done_counter:done_counter + num_ready] = data_to_do.sampling_strategy[done_mask]
+            data_done.stime[done_counter:done_counter + num_ready] = data_to_do.stime[done_mask]
+            data_done.etime[done_counter:done_counter + num_ready] = data_to_do.etime[done_mask]
+            data_done.id[done_counter:done_counter + num_ready] = data_to_do.id[done_mask]
 
             # Averaging of the data, as before we just added up contributions
             # Current behaviour is that if there are no steps made, I divide by 0 which results in NaN, which is actually great as I then in post processing know for which points I dont have data
             for variable in dict_vars:
-                data_done[variable][done_counter:done_counter + num_ready] = data_to_do[variable][done_mask] / data_to_do['number_of_steps'][done_mask]
+                data_done.dict_measurement[variable][done_counter:done_counter + num_ready] = data_to_do.dict_measurement[variable][done_mask] / data_to_do.number_of_steps[done_mask]
 
 
             # Keep count of how many points are done
-            data_done['counter'] += num_ready
+            data_done.counter+= num_ready
 
             # Only keep the points that aren't done yet
             keep_mask = ~done_mask
 
-            # Filter the entrys in the dictionary and only keep the points that aren't done yet
-            for key in data_to_do:
-                data_to_do[key] = data_to_do[key][keep_mask]
+            data_to_do.apply_mask(keep_mask)
 
 
-def tracking_points_cif(datetime, data_to_do, data_done, data_np, dict_vars, operations_dict):
+def tracking_points_cif(datetime, data_to_do: StationDataToDoCIF, data_done: StationDataDoneCIF, data_np, dict_vars, operations_dict):
     """! Track the chosen parameter on the chosen locations and times for cif. Move data that is done being measured to the data_done dictionary
     @param datetime             Current datetime (np.datetime object)
     @param data_to_do           The dictionary with the data that needs to be done
@@ -921,26 +1030,26 @@ def tracking_points_cif(datetime, data_to_do, data_done, data_np, dict_vars, ope
     @param dict_vars            Dictionary containing the variables, user defined
     @param operations_dict      Dictionary mapping the names of the signs field in the previous dict to operator. objects
     """
-    if data_to_do['lon'].size > 0: # Checks if there is still work to do
+    if data_to_do.lon.size > 0: # Checks if there is still work to do
         
         model_time_np = np.datetime64(datetime)
         # mask to mask out the stations, where the model time is in the hour before the output of the measurement. They are ready for measurement
         measuring_mask = (
-            (((data_to_do['sampling_strategy'] == 1) | (data_to_do['sampling_strategy'] == 2)) &
-            (data_to_do['stime'] <= model_time_np) & 
-            (data_to_do['etime'] >= model_time_np)) |
-            (((data_to_do['sampling_strategy'] == 3) | (data_to_do['sampling_strategy'] == 4)) &
-            (data_to_do['etime'] <= model_time_np))
+            (((data_to_do.sampling_strategy == 1) | (data_to_do.sampling_strategy == 2)) &
+            (data_to_do.stime <= model_time_np) & 
+            (data_to_do.etime >= model_time_np)) |
+            (((data_to_do.sampling_strategy == 3) | (data_to_do.sampling_strategy == 4)) &
+            (data_to_do.etime <= model_time_np))
         )
         if np.any(measuring_mask):
             # Filter arrays for ready stations
-            jc_ready = data_to_do['jc_loc'][measuring_mask]
-            jb_ready = data_to_do['jb_loc'][measuring_mask]
-            vi_ready1 = data_to_do['vertical_index1'][measuring_mask]
-            vi_ready2 = data_to_do['vertical_index2'][measuring_mask]
-            weights_vertical_ready = data_to_do['vertical_weight'][measuring_mask]
-            weights_ready = data_to_do['horizontal_weight'][measuring_mask]
-            parameters_ready = data_to_do['parameter'][measuring_mask]
+            jc_ready = data_to_do.jc_loc[measuring_mask]
+            jb_ready = data_to_do.jb_loc[measuring_mask]
+            vi_ready1 = data_to_do.vertical_index1[measuring_mask]
+            vi_ready2 = data_to_do.vertical_index2[measuring_mask]
+            weights_vertical_ready = data_to_do.vertical_weight[measuring_mask]
+            weights_ready = data_to_do.horizontal_weight[measuring_mask]
+            parameters_ready = data_to_do.parameter[measuring_mask]
             
             indices = np.where(measuring_mask)[0]
 
@@ -955,36 +1064,33 @@ def tracking_points_cif(datetime, data_to_do, data_done, data_np, dict_vars, ope
                 monitoring_combined = monitoring_1 + weight_vertical * (monitoring_2 - monitoring_1)
                 # Do the horizontal interpolation
                 if weights_horizontal.size > 0 and monitoring_combined.size > 0:
-                    data_to_do['obs'][index] += np.sum(weights_horizontal * monitoring_combined)
-                data_to_do['number_of_steps'][index] +=1
+                    data_to_do.obs[index] += np.sum(weights_horizontal * monitoring_combined)
+                data_to_do.number_of_steps[index] +=1
 
 
-        done_mask = data_to_do['etime'] <= model_time_np # This data is done being monitored and can be output
-        done_counter = data_done['counter']
+        done_mask = data_to_do.etime <= model_time_np # This data is done being monitored and can be output
+        done_counter = data_done.counter
         num_ready = np.sum(done_mask) # Count how many points are done
         if num_ready > 0:
         # Add all of the done points to the done arrays
-            keys_done = ['lon', 'lat', 'elevation', 'sampling_height', 'sampling_strategy', 'stime', 'etime', 'counter', 'id']
-            data_done['lon'][done_counter:done_counter + num_ready] = data_to_do['lon'][done_mask]
-            data_done['lat'][done_counter:done_counter + num_ready] = data_to_do['lat'][done_mask]
-            data_done['elevation'][done_counter:done_counter + num_ready] = data_to_do['elevation'][done_mask]
-            data_done['sampling_height'][done_counter:done_counter + num_ready] = data_to_do['sampling_height'][done_mask]
-            data_done['sampling_strategy'][done_counter:done_counter + num_ready] = data_to_do['sampling_strategy'][done_mask]
-            data_done['stime'][done_counter:done_counter + num_ready] = data_to_do['stime'][done_mask]
-            data_done['etime'][done_counter:done_counter + num_ready] = data_to_do['etime'][done_mask]
-            data_done['id'][done_counter:done_counter + num_ready] = data_to_do['id'][done_mask]
-            data_done['parameter'][done_counter:done_counter + num_ready] = data_to_do['parameter'][done_mask]
-            data_done['obs'][done_counter:done_counter + num_ready] = data_to_do['obs'][done_mask] / data_to_do['number_of_steps'][done_mask]
+            data_done.lon[done_counter:done_counter + num_ready] = data_to_do.lon[done_mask]
+            data_done.lat[done_counter:done_counter + num_ready] = data_to_do.lat[done_mask]
+            data_done.elevation[done_counter:done_counter + num_ready] = data_to_do.elevation[done_mask]
+            data_done.sampling_height[done_counter:done_counter + num_ready] = data_to_do.sampling_height[done_mask]
+            data_done.sampling_strategy[done_counter:done_counter + num_ready] = data_to_do.sampling_strategy[done_mask]
+            data_done.stime[done_counter:done_counter + num_ready] = data_to_do.stime[done_mask]
+            data_done.etime[done_counter:done_counter + num_ready] = data_to_do.etime[done_mask]
+            data_done.id[done_counter:done_counter + num_ready] = data_to_do.id[done_mask]
+            data_done.parameter[done_counter:done_counter + num_ready] = data_to_do.parameter[done_mask]
+            data_done.obs[done_counter:done_counter + num_ready] = data_to_do.obs[done_mask] / data_to_do.number_of_steps[done_mask]
 
 
 
             # Keep count of how many points are done
-            data_done['counter'] += num_ready
+            data_done.counter += num_ready
 
             # Only keep the points that aren't done yet
             keep_mask = ~done_mask
 
-            # Filter the entrys in the dictionary and only keep the points that aren't done yet
-            for key in data_to_do:
-                data_to_do[key] = data_to_do[key][keep_mask]
+            data_to_do.apply_mask(keep_mask)
         

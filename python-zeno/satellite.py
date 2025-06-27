@@ -41,6 +41,84 @@ import os
 ## Constants:
 Mda, MCH4 = 28.964, 16.04
 
+class SatelliteDataToDoGeneral:
+    def __init__(self, lon, lat, timestep, jc_loc, jb_loc, parameter, weights):
+        self.lon = lon
+        self.lat = lat
+        self.timestep = timestep
+        self.jc_loc = jc_loc
+        self.jb_loc = jb_loc
+        self.parameter = parameter
+        self.weights = weights
+
+    def filter_ready(self, current_time):
+        mask = self.timestep <= np.datetime64(current_time)
+        return mask
+
+    def apply_mask(self, mask):
+        for key in vars(self):
+            value = getattr(self, key)
+            if isinstance(value, np.ndarray) and value.shape[0] == mask.shape[0]:
+                setattr(self, key, value[mask])
+
+class SatelliteDataToDoCH4:
+    def __init__(self, lon, lat, timestep, jc_loc, jb_loc, weights, qa0, ak, pw, pavg0, cams_index, frac_cams, hyam, hybm, hyai, hybi):
+        self.lon = lon
+        self.lat = lat
+        self.timestep = timestep
+        self.jc_loc = jc_loc
+        self.jb_loc = jb_loc
+        self.weights = weights
+
+        self.qa0 = qa0
+        self.ak = ak
+        self.pw = pw
+        self.pavg0 = pavg0
+        self.cams_index = cams_index
+        self.frac_cams = frac_cams
+        self.hyam = hyam
+        self.hybm = hybm
+        self.hyai = hyai
+        self.hybi = hybi
+
+    def filter_ready(self, current_time):
+        mask = self.timestep <= np.datetime64(current_time)
+        return mask
+
+    def apply_mask(self, mask):
+        for key in vars(self):
+            value = getattr(self, key)
+            if isinstance(value, np.ndarray) and value.shape[0] == mask.shape[0]:
+                setattr(self, key, value[mask])
+
+class SatelliteDataDoneGeneral:
+    def __init__(self, lon, lat, timestep, parameter, measurement, counter):
+        self.lon = lon
+        self.lat = lat
+        self.timestep = timestep
+        self.parameter = parameter
+        self.measurement = measurement
+        self.counter = counter
+
+    def apply_mask(self, mask):
+        for key in vars(self):
+            value = getattr(self, key)
+            if isinstance(value, np.ndarray) and value.shape[0] == mask.shape[0]:
+                setattr(self, key, value[mask])
+
+class SatelliteDataDoneCH4:
+    def __init__(self, lon, lat, timestep, CH4, counter):
+        self.lon = lon
+        self.lat = lat
+        self.timestep = timestep
+        self.CH4 = CH4
+        self.counter = counter
+
+    def apply_mask(self, mask):
+        for key in vars(self):
+            value = getattr(self, key)
+            if isinstance(value, np.ndarray) and value.shape[0] == mask.shape[0]:
+                setattr(self, key, value[mask])
 
 def pad_list_of_lists_float(list_of_lists, pad_value=0.0):
     """! Pads a list of lists to a numpy array, with pad value and of type float
@@ -68,49 +146,6 @@ def pad_list_of_lists_int(list_of_lists, pad_value=0):
     padded_lists = [list(inner) + [pad_value] * (max_len - len(inner)) for inner in list_of_lists]
     return np.array(padded_lists, dtype=np.int32)
 
-def interpolation_pressure(ready_mask, CH4_BG_np, CH4_EMIS_np, jc_ready_sat, jb_ready_sat, pres_np, data_to_do):
-    """! The full interpolation method. It interpolates a whole column. The interpolation is done horizontally via precomputed weights and vertically via pressure matching
-    @param list_of_lists    A list of lists wanting to be padded and converted to a numpy array
-    @param pad_value        The value with which should be padded
-    @return  The padded numpy array
-    """
-    num_ready = np.sum(ready_mask)
-    num_levels = len(CH4_BG_np[0, :, 0].squeeze())
-    ICON_profile = np.empty((num_ready, num_levels), dtype = np.float64)
-    for i in range(num_ready):
-            jc = jc_ready_sat[i]
-            jb = jb_ready_sat[i]
-            profiles = (
-                (Mda / MCH4) * CH4_BG_np[jc, :, jb]\
-                + 1.e9 * (Mda / MCH4) * CH4_EMIS_np[jc, :, jb]
-            )
-            result = np.empty(num_levels, dtype = np.float64)
-            pres = (pres_np[jc, :, jb].squeeze()) / 1.e2
-            target_pres = pres_np[jc[0], :, jb[0]].squeeze()
-            for j in range(num_levels):
-                this_target_pressure = target_pres[j]
-                result[j] = data_to_do['weights'][ready_mask][i][0] * profiles[0, j]
-
-                for k in range(1, len(jb)):
-                    best_index = int(np.argmin(np.abs(pres_np[jc[k], :, jb[k]] - this_target_pressure)))
-
-                    actual_pressure_closest = pres_np[jc[k], best_index, jb[k]]
-                    second_index = best_index
-                    # Second index is for height interpolation. depending on where the closest height is, compute the second index, also taking into consideration boundaries
-                    if actual_pressure_closest >= this_target_pressure and actual_pressure_closest != pres_np[jc[k], -1, jb[k]]:
-                        second_index += 1
-                    elif actual_pressure_closest < this_target_pressure and actual_pressure_closest != pres_np[jc[k], 0, jb[k]]:
-                        second_index -= 1
-
-                    second_pres = pres_np[jc[k], second_index, jb[k]]
-                    vertical_weight = 0
-                    if second_pres - actual_pressure_closest != 0:
-                        vertical_weight = (this_target_pressure - actual_pressure_closest) / (second_pres - actual_pressure_closest)
-
-                    this_cell_interpolation_vertical = profiles[k , best_index] + vertical_weight * (profiles[k, second_index] - profiles[k, best_index])
-                    result[j] += data_to_do['weights'][ready_mask][i][k] * this_cell_interpolation_vertical
-            ICON_profile[i, :] = result
-    return ICON_profile
 
 def datetime_to_milliseconds_since_reference(arr, reference_str="2019-01-01T11:14:35.629"):
     """! Converts datetime 64 to milliseconds since a reference time.
@@ -213,8 +248,8 @@ def find_stations_satellite_cif(lons, lats, timesteps, parameters, tree, decomp_
             np.array(weights_all, dtype = np.float64))
 
 
-def find_stations_satellite(lons, lats, timesteps, tree, decomp_domain, clon, pavg0_sat, pw_sat, ak_sat, qa0_sat, cams_tree, accepted_distance, longitude_corners, latitude_corners, tree_corners, icon_polygons):
-    """! Find the satellite observation points on each PE in the own domain and return all of the relevant data needed for computation. All lists need to have the same length
+def find_stations_satellite_CH4(lons, lats, timesteps, tree, decomp_domain, clon, pavg0_sat, pw_sat, ak_sat, qa0_sat, cams_tree, accepted_distance, longitude_corners, latitude_corners, tree_corners, icon_polygons):
+    """! Find the satellite CH4 observation points on each PE in the own domain and return all of the relevant data needed for computation. All lists need to have the same length
     @param lons                 A list of longitudes of points to locate
     @param lats                 A list of latitudes of points to locate
     @param timesteps            A list of timesteps at which the measurements have been taken of the points needed to be located
@@ -373,24 +408,23 @@ def write_header_sat_cif(comm, file_name, num_levels):
         measurement = ncfile_sat.createVariable('measurement', 'f8',('index','level') )
         ncfile_sat.close()
 
-def write_satellite_cif(comm, done_data, file_name_output):
+def write_satellite_cif(comm, done_data: SatelliteDataDoneGeneral, file_name_output):
     """!Function to write satellite column data to output nc file using preallocated arrays with a counter.
     @param comm                 MPI communicator containing all working PE's
     @param done_data            Dictionary with the data that is done
     @param file_name_output     Filename of the output nc file. Expects the header of the nc file to be written already
     """
     done_data_local = None
-    done_counter = done_data['counter']
+    done_counter = done_data.counter
 
-    ['lon', 'lat', 'timestep', 'measurement', 'counter', 'parameter']
     # Collect the local point data, that we want to write out
     if done_counter > 0:
         done_data_local = {
-            "lon": done_data['lon'][:done_counter],
-            "lat": done_data['lat'][:done_counter],
-            "date": done_data['timestep'][:done_counter],
-            "measurement": done_data['measurement'][:done_counter],
-            "parameter": done_data['parameter'][:done_counter],
+            "lon": done_data.lon[:done_counter],
+            "lat": done_data.lat[:done_counter],
+            "date": done_data.timestep[:done_counter],
+            "measurement": done_data.measurement[:done_counter],
+            "parameter": done_data.parameter[:done_counter],
         }
     # Gather the local data to root 0, such that one process has all data that needs to be written out
     gathered_done_data = comm.gather(done_data_local, root=0)
@@ -432,23 +466,23 @@ def write_satellite_cif(comm, done_data, file_name_output):
             # Write out the data
             ncfile.close()
             
-    done_data['counter'] = 0 # Reset the done counter
+    done_data.counter = 0 # Reset the done counter
 
-def write_satellite(comm, done_data, file_name_output):
+def write_satellite_CH4(comm, done_data: SatelliteDataDoneCH4, file_name_output):
     """!Function to write satellite CH4 data to output nc file using preallocated arrays with a counter.
     @param comm                 MPI communicator containing all working PE's
     @param data_done            Dictionary with the data that is done
     @param file_name_output     Filename of the output nc file. Expects the header of the nc file to be written already
     """
     done_data_local = None
-    done_counter = done_data['counter']
+    done_counter = done_data.counter
     # Collect the local point data, that we want to write out
     if done_counter > 0:
         done_data_local = {
-            "lon": done_data['lon'][:done_counter],
-            "lat": done_data['lat'][:done_counter],
-            "date": done_data['timestep'][:done_counter],
-            "CH4": done_data['CH4'][:done_counter],
+            "lon": done_data.lon[:done_counter],
+            "lat": done_data.lat[:done_counter],
+            "date": done_data.timestep[:done_counter],
+            "CH4": done_data.CH4[:done_counter],
         }
 
     # Gather the local data to root 0, such that one process has all data that needs to be written out
@@ -487,9 +521,9 @@ def write_satellite(comm, done_data, file_name_output):
             # Write out the data
             ncfile.close()
             
-    done_data['counter'] = 0 # Reset the done counter
+    done_data.counter = 0 # Reset the done counter
 
-def read_in_satellite_data(comm, tree, decomp_domain, clon, start_model, end_model, tropomi_filename, cams_base_path, cams_params_file, accepted_distance, icon_polygons):
+def read_in_satellite_data_CH4(comm, tree, decomp_domain, clon, start_model, end_model, tropomi_filename, cams_base_path, cams_params_file, accepted_distance, icon_polygons):
     """! Read in the satellite measurement points on each PE in the own domain and return all of the relevant data needed for computation as dictionaries
     @param comm                 MPI communicator containing all working PE's
     @param tree                 A tree with the cells in them that you can query
@@ -603,7 +637,7 @@ def read_in_satellite_data(comm, tree, decomp_domain, clon, start_model, end_mod
     # Create the icon polygon tree
     tree_corners = STRtree(icon_polygons)
 
-    (jc_loc_satellite, jb_loc_satellite, satellite_lons, satellite_lats, satellite_timestep, pavg0_sat, pw_sat, ak_sat, qa0_sat, cams_indices_sat, fracs_cams, weights_sat) = find_stations_satellite(satellite_lons, satellite_lats, obs_time_dts, tree, decomp_domain, clon, pavg0_sat, pw_sat, ak_sat, qa0_sat, cams_tree, accepted_distance, longitude_corners, latitude_corners, tree_corners, icon_polygons)
+    (jc_loc_satellite, jb_loc_satellite, satellite_lons, satellite_lats, satellite_timestep, pavg0_sat, pw_sat, ak_sat, qa0_sat, cams_indices_sat, fracs_cams, weights_sat) = find_stations_satellite_CH4(satellite_lons, satellite_lats, obs_time_dts, tree, decomp_domain, clon, pavg0_sat, pw_sat, ak_sat, qa0_sat, cams_tree, accepted_distance, longitude_corners, latitude_corners, tree_corners, icon_polygons)
    
     N_satellite_points = satellite_lons.shape[0] # Amount of satellite points in the local PE
 
@@ -614,14 +648,16 @@ def read_in_satellite_data(comm, tree, decomp_domain, clon, start_model, end_mod
     done_CH4_sat = np.empty(N_satellite_points, dtype=np.float64)
     done_counter_sat = 0
 
-    # Load all data into Dicts
-    keys_to_do = ['lon', 'lat', 'timestep', 'jc_loc', 'jb_loc', 'pavg0', 'pw', 'ak', 'qa0', 'cams_index', 'frac_cams', 'hyam', 'hybm', 'hyai', 'hybi', 'weights']
-    values_to_do = [satellite_lons, satellite_lats, satellite_timestep, jc_loc_satellite, jb_loc_satellite, pavg0_sat, pw_sat, ak_sat, qa0_sat, cams_indices_sat, fracs_cams, hyam, hybm, hyai, hybi, weights_sat]
-    local_data_to_do = {keys_to_do[i]:values_to_do[i] for i in range(len(keys_to_do))}
+    # # Load all data into Dicts
+    # keys_to_do = ['lon', 'lat', 'timestep', 'jc_loc', 'jb_loc', 'pavg0', 'pw', 'ak', 'qa0', 'cams_index', 'frac_cams', 'hyam', 'hybm', 'hyai', 'hybi', 'weights']
+    # values_to_do = [satellite_lons, satellite_lats, satellite_timestep, jc_loc_satellite, jb_loc_satellite, pavg0_sat, pw_sat, ak_sat, qa0_sat, cams_indices_sat, fracs_cams, hyam, hybm, hyai, hybi, weights_sat]
+    # local_data_to_do = {keys_to_do[i]:values_to_do[i] for i in range(len(keys_to_do))}
+    local_data_to_do = SatelliteDataToDoCH4(satellite_lons, satellite_lats, satellite_timestep, jc_loc_satellite, jb_loc_satellite, weights_sat, qa0_sat, ak_sat, pw_sat, pavg0_sat, cams_indices_sat, fracs_cams, hyam, hybm, hyai, hybi)
 
-    keys_done = ['lon', 'lat', 'timestep', 'CH4', 'counter']
-    values_done = [done_lons_sat, done_lats_sat, done_times_sat, done_CH4_sat, done_counter_sat]
-    local_data_done = {keys_done[i]:values_done[i] for i in range(len(keys_done))}
+    # keys_done = ['lon', 'lat', 'timestep', 'CH4', 'counter']
+    # values_done = [done_lons_sat, done_lats_sat, done_times_sat, done_CH4_sat, done_counter_sat]
+    # local_data_done = {keys_done[i]:values_done[i] for i in range(len(keys_done))}
+    local_data_done = SatelliteDataDoneCH4(done_lons_sat, done_lats_sat, done_times_sat, done_CH4_sat, done_counter_sat)
     
     return local_data_to_do, local_data_done, cams_files_dict # Return all of the Data in Dicts
 
@@ -684,13 +720,15 @@ def read_in_satellite_data_cif(comm, tree, decomp_domain, clon, start_model, end
     done_counter_sat = 0
 
     # Load all data into Dicts
-    keys_to_do = ['lon', 'lat', 'timestep', 'jc_loc', 'jb_loc', 'parameter', 'weights']
-    values_to_do = [satellite_lons, satellite_lats, satellite_timestep, jc_loc_satellite, jb_loc_satellite, satellite_parameters, weights_all]
-    local_data_to_do = {keys_to_do[i]:values_to_do[i] for i in range(len(keys_to_do))}
+    # keys_to_do = ['lon', 'lat', 'timestep', 'jc_loc', 'jb_loc', 'parameter', 'weights']
+    # values_to_do = [satellite_lons, satellite_lats, satellite_timestep, jc_loc_satellite, jb_loc_satellite, satellite_parameters, weights_all]
+    # local_data_to_do = {keys_to_do[i]:values_to_do[i] for i in range(len(keys_to_do))}
+    local_data_to_do = SatelliteDataToDoGeneral(satellite_lons, satellite_lats, satellite_timestep, jc_loc_satellite, jb_loc_satellite, satellite_parameters, weights_all)
 
-    keys_done = ['lon', 'lat', 'timestep', 'measurement', 'counter', 'parameter']
-    values_done = [done_lons_sat, done_lats_sat, done_times_sat, done_measurements_sat, done_counter_sat, done_parameters_sat]
-    local_data_done = {keys_done[i]:values_done[i] for i in range(len(keys_done))}
+    # keys_done = ['lon', 'lat', 'timestep', 'measurement', 'counter', 'parameter']
+    # values_done = [done_lons_sat, done_lats_sat, done_times_sat, done_measurements_sat, done_counter_sat, done_parameters_sat]
+    # local_data_done = {keys_done[i]:values_done[i] for i in range(len(keys_done))}
+    local_data_done = SatelliteDataDoneGeneral(done_lons_sat, done_lats_sat, done_times_sat, done_parameters_sat, done_measurements_sat, done_counter_sat)
     
     return local_data_to_do, local_data_done # Return all of the Data in Dicts
 
@@ -712,7 +750,7 @@ def update_cams(datetime, cams_files_dict, cams_prev_data=None, cams_next_data=N
     cams_next_data = xr.open_dataset(cams_files_dict[cams_next_time])
     return cams_prev_data, cams_next_data
 
-def tracking_satellite_cif_same_index(datetime, data_to_do, data_done, data_np, dict_vars, operations_dict, num_levels):
+def tracking_satellite_cif_same_index(datetime, data_to_do: SatelliteDataToDoGeneral, data_done: SatelliteDataDoneGeneral, data_np, dict_vars, operations_dict, num_levels):
     """! Track the data of the satellite measurements for cif. It interpolates horizontally using inverse distancing and vertically just taking the same vertical index as the neighboring columns. moves data that is done being measured to the data_done dictionary
     @param datetime             Current datetime (np.datetime object)
     @param data_to_do           The dictionary with the data that needs to be done
@@ -722,60 +760,61 @@ def tracking_satellite_cif_same_index(datetime, data_to_do, data_done, data_np, 
     @param operations_dict      Dictionary with the operators
     @param num_levels           The number of vertical levels in this simulation
     """
-    if data_to_do['timestep'].size > 0: # Checks if there is still work to do
+    if data_to_do.timestep.size > 0: # Checks if there is still work to do
 
         model_time_np = np.datetime64(datetime)
         # mask to mask out the stations, where the model time is greater or equal to the moment we want to measure. They are ready for measurement
-        ready_mask = data_to_do['timestep'] <= model_time_np
+        ready_mask = data_to_do.timestep <= model_time_np
 
         if np.any(ready_mask):
             # Filter arrays for ready stations
-            jc_ready_sat = data_to_do['jc_loc'][ready_mask]
-            jb_ready_sat = data_to_do['jb_loc'][ready_mask]
+            jc_ready_sat = data_to_do.jc_loc[ready_mask]
+            jb_ready_sat = data_to_do.jb_loc[ready_mask]
 
             num_ready = np.sum(ready_mask)
 
-            variables = data_to_do['parameter'][ready_mask]
+            variables = data_to_do.parameter[ready_mask]
             for i, variable in enumerate(variables):
                 jc = jc_ready_sat[i]
                 jb = jb_ready_sat[i]
-                done_counter = data_done['counter']
+                done_counter = data_done.counter
                 list = data_np[variable]
                 ICON_profile = list[0][jc, :, jb, 0, 0] * dict_vars[variable]['factor'][0]
                 result = np.empty(num_levels, dtype = np.float64)
                 for sign, j in zip(dict_vars[variable]['signs'], range(1, len(list))):
                     ICON_profile = operations_dict[sign](ICON_profile, list[j][jc, :, jb, 0, 0] * dict_vars[variable]['factor'][i])
                 for j in range(num_levels):
-                    result[j] = data_to_do['weights'][ready_mask][i][0] * ICON_profile[0, j]
+                    result[j] = data_to_do.weights[ready_mask][i][0] * ICON_profile[0, j]
 
                     for k in range(1, len(jb)):
                         best_index = j
-                        result[j] += data_to_do['weights'][ready_mask][i][j] * ICON_profile[k, best_index]
+                        result[j] += data_to_do.weights[ready_mask][i][j] * ICON_profile[k, best_index]
 
                 # Repeat spatial info for each level
-                data_done['lon'][done_counter:done_counter + 1] = data_to_do['lon'][ready_mask][i]
-                data_done['lat'][done_counter:done_counter + 1] = data_to_do['lat'][ready_mask][i]
-                data_done['timestep'][done_counter:done_counter + 1] = data_to_do['timestep'][ready_mask][i]
-                data_done['measurement'][done_counter:done_counter + 1 , :] = result
-                data_done['parameter'][done_counter:done_counter + 1] = variable
+                data_done.lon[done_counter:done_counter + 1] = data_to_do.lon[ready_mask][i]
+                data_done.lat[done_counter:done_counter + 1] = data_to_do.lat[ready_mask][i]
+                data_done.timestep[done_counter:done_counter + 1] = data_to_do.timestep[ready_mask][i]
+                data_done.measurement[done_counter:done_counter + 1 , :] = result
+                data_done.parameter[done_counter:done_counter + 1] = variable
 
-            data_done['counter'] += 1
+            data_done.counter += 1
 
             
 
             # Only keep the satellite points that aren't done yet
             keep_mask = ~ready_mask
 
-            keys_to_filter = [
-                'lon', 'lat', 'timestep',
-                'jc_loc', 'jb_loc', 'parameter', 'weights'
-            ]
+            # keys_to_filter = [
+            #     'lon', 'lat', 'timestep',
+            #     'jc_loc', 'jb_loc', 'parameter', 'weights'
+            # ]
 
-            for key in keys_to_filter:
-                data_to_do[key] = data_to_do[key][keep_mask]
+            # for key in keys_to_filter:
+            #     data_to_do[key] = data_to_do[key][keep_mask]
+            data_to_do.apply_mask(keep_mask)
         
 
-def tracking_satellite_cif_pressures(datetime, data_to_do, data_done, data_np, dict_vars, operations_dict, pres_np, num_levels):
+def tracking_satellite_cif_pressures(datetime, data_to_do: SatelliteDataToDoGeneral, data_done: SatelliteDataDoneGeneral, data_np, dict_vars, operations_dict, pres_np, num_levels):
     """! Track the data of the satellite measurements for cif. It interpolates horizontally using inverse distancing and vertically by retrieving the pressure of the closest column and then linearly interpolating to this pressure. moves data that is done being measured to the data_done dictionary
     @param datetime             Current datetime (np.datetime object)
     @param data_to_do           The dictionary with the data that needs to be done
@@ -786,25 +825,25 @@ def tracking_satellite_cif_pressures(datetime, data_to_do, data_done, data_np, d
     @param num_levels           The number of vertical levels in this simulation
     @param pres_np              Numpy array with the current pressures
     """
-    if data_to_do['timestep'].size > 0: # Checks if there is still work to do
+    if data_to_do.timestep.size > 0: # Checks if there is still work to do
 
         model_time_np = np.datetime64(datetime)
         # mask to mask out the stations, where the model time is greater or equal to the moment we want to measure. They are ready for measurement
-        ready_mask = data_to_do['timestep'] <= model_time_np
+        ready_mask = data_to_do.timestep <= model_time_np
 
         if np.any(ready_mask):
             # Filter arrays for ready stations
-            jc_ready_sat = data_to_do['jc_loc'][ready_mask]
-            jb_ready_sat = data_to_do['jb_loc'][ready_mask]
+            jc_ready_sat = data_to_do.jc_loc[ready_mask]
+            jb_ready_sat = data_to_do.jb_loc[ready_mask]
 
             num_ready = np.sum(ready_mask)
 
-            variables = data_to_do['parameter'][ready_mask]
+            variables = data_to_do.parameter[ready_mask]
             for i in range(num_ready):
                 for variable in variables:
                     jc = jc_ready_sat[i]
                     jb = jb_ready_sat[i]
-                    done_counter = data_done['counter']
+                    done_counter = data_done.counter
                     list = data_np[variable]
                     ICON_profile = list[0][jc, :, jb, 0, 0] * dict_vars[variable]['factor'][0]
                     result = np.empty(num_levels, dtype = np.float64)
@@ -814,7 +853,7 @@ def tracking_satellite_cif_pressures(datetime, data_to_do, data_done, data_np, d
                     target_pres = pres_np[jc[0], :, jb[0]].squeeze()
                     for j in range(num_levels):
                         this_target_pressure = target_pres[j]
-                        result[j] = data_to_do['weights'][ready_mask][i][0] * ICON_profile[0, j]
+                        result[j] = data_to_do.weights[ready_mask][i][0] * ICON_profile[0, j]
 
                         for k in range(1, len(jb)):
                             best_index = int(np.argmin(np.abs(pres_np[jc[k], :, jb[k]] - this_target_pressure)))
@@ -833,32 +872,26 @@ def tracking_satellite_cif_pressures(datetime, data_to_do, data_done, data_np, d
                                 vertical_weight = (this_target_pressure - actual_pressure_closest) / (second_pres - actual_pressure_closest)
 
                             this_cell_interpolation_vertical = ICON_profile[k , best_index] + vertical_weight * (ICON_profile[k, second_index] - ICON_profile[k, best_index])
-                            result[j] += data_to_do['weights'][ready_mask][i][k] * this_cell_interpolation_vertical
+                            result[j] += data_to_do.weights[ready_mask][i][k] * this_cell_interpolation_vertical
 
                     # Repeat spatial info for each level
-                    data_done['lon'][done_counter:done_counter + 1] = data_to_do['lon'][ready_mask][i]
-                    data_done['lat'][done_counter:done_counter + 1] = data_to_do['lat'][ready_mask][i]
-                    data_done['timestep'][done_counter:done_counter + 1] = data_to_do['timestep'][ready_mask][i]
-                    data_done['measurement'][done_counter:done_counter + 1 , :] = result
-                    data_done['parameter'][done_counter:done_counter + 1] = variable
-                    data_done['counter'] += 1
+                    data_done.lon[done_counter:done_counter + 1] = data_to_do.lon[ready_mask][i]
+                    data_done.lat[done_counter:done_counter + 1] = data_to_do.lat[ready_mask][i]
+                    data_done.timestep[done_counter:done_counter + 1] = data_to_do.timestep[ready_mask][i]
+                    data_done.measurement[done_counter:done_counter + 1 , :] = result
+                    data_done.parameter[done_counter:done_counter + 1] = variable
+                    data_done.counter += 1
 
             
 
             # Only keep the satellite points that aren't done yet
             keep_mask = ~ready_mask
 
-            keys_to_filter = [
-                'lon', 'lat', 'timestep',
-                'jc_loc', 'jb_loc', 'parameter', 'weights'
-            ]
-
-            for key in keys_to_filter:
-                data_to_do[key] = data_to_do[key][keep_mask]
+            data_to_do.apply_mask(keep_mask)
         
 
 
-def tracking_CH4_satellite(datetime, CH4_EMIS_np, CH4_BG_np, pres_ifc_np, pres_np, data_to_do, data_done, cams_prev_data, cams_next_data):
+def tracking_CH4_satellite(datetime, CH4_EMIS_np, CH4_BG_np, pres_ifc_np, pres_np, data_to_do: SatelliteDataToDoCH4, data_done: SatelliteDataDoneCH4, cams_prev_data, cams_next_data):
     """! Track the CH4 of the satellite measurements. Interpolate horizontally via the are covered by the observation, vertically via pressures and then linear interpolation. Then computes everything for the satellite observation value, to compare. Move data that is done being measured to the data_done dictionary
     @param datetime             Current datetime (np.datetime object)
     @param data_to_do           The dictionary with the data that needs to be done
@@ -870,19 +903,19 @@ def tracking_CH4_satellite(datetime, CH4_EMIS_np, CH4_BG_np, pres_ifc_np, pres_n
     @param cams_prev_data       Xarray dataset, with the current CAMS previous data
     @param cams_next_data       Xarray dataset, with the current CAMS next data
     """
-    if data_to_do['timestep'].size > 0: # Checks if there is still work to do
+    if data_to_do.timestep.size > 0: # Checks if there is still work to do
 
         model_time_np = np.datetime64(datetime)
         # mask to mask out the stations, where the model time is greater or equal to the moment we want to measure. They are ready for measurement
-        ready_mask = data_to_do['timestep'] <= model_time_np
+        ready_mask = data_to_do.timestep <= model_time_np
 
         if np.any(ready_mask):
             # Filter arrays for ready stations
-            jc_ready_sat = data_to_do['jc_loc'][ready_mask, :]
-            jb_ready_sat = data_to_do['jb_loc'][ready_mask, :]
-            frac_cams_ready = data_to_do['frac_cams'][ready_mask]
+            jc_ready_sat = data_to_do.jc_loc[ready_mask, :]
+            jb_ready_sat = data_to_do.jb_loc[ready_mask, :]
+            frac_cams_ready = data_to_do.frac_cams[ready_mask]
             frac_cams_ready = frac_cams_ready[:, np.newaxis]
-            cams_indices_ready = data_to_do['cams_index'][ready_mask]
+            cams_indices_ready = data_to_do.cams_index[ready_mask]
 
             ## In general the following applies. All data is from TOA to surface. Up until the get coef function, which expects the data the other way around
             ## So there we turn everything around
@@ -903,10 +936,10 @@ def tracking_CH4_satellite(datetime, CH4_EMIS_np, CH4_BG_np, pres_ifc_np, pres_n
             CAMS_aps_next_reshaped = CAMS_aps_next[:, np.newaxis]
             N_ready = CAMS_aps_prev.shape[0]  # number of ready satellite points
 
-            hyam_new_axis = np.tile(data_to_do['hyam'], (N_ready, 1))
-            hybm_new_axis = np.tile(data_to_do['hybm'], (N_ready, 1))
-            hyai_new_axis = np.tile(data_to_do['hyai'], (N_ready, 1))
-            hybi_new_axis = np.tile(data_to_do['hybi'], (N_ready, 1))
+            hyam_new_axis = np.tile(data_to_do.hyam, (N_ready, 1))
+            hybm_new_axis = np.tile(data_to_do.hybm, (N_ready, 1))
+            hyai_new_axis = np.tile(data_to_do.hyai, (N_ready, 1))
+            hybi_new_axis = np.tile(data_to_do.hybi, (N_ready, 1))
             # This is a formula I got from the CAMS data
             CAMS_p_prev =  (hyam_new_axis + hybm_new_axis * CAMS_aps_prev_reshaped) / 1.e2
             CAMS_p_next = (hyam_new_axis + hybm_new_axis * CAMS_aps_next_reshaped) / 1.e2
@@ -932,7 +965,7 @@ def tracking_CH4_satellite(datetime, CH4_EMIS_np, CH4_BG_np, pres_ifc_np, pres_n
                     target_pres = pres_np[jc[0], :, jb[0]].squeeze()
                     for j in range(num_levels):
                         this_target_pressure = target_pres[j]
-                        result[j] = data_to_do['weights'][ready_mask][i, 0] * profiles[0, j]
+                        result[j] = data_to_do.weights[ready_mask][i, 0] * profiles[0, j]
 
                         for k in range(1, len(jb)):
                             best_index = int(np.argmin(np.abs(pres_np[jc[k], :, jb[k]] - this_target_pressure)))
@@ -951,7 +984,7 @@ def tracking_CH4_satellite(datetime, CH4_EMIS_np, CH4_BG_np, pres_ifc_np, pres_n
                                 vertical_weight = (this_target_pressure - actual_pressure_closest) / (second_pres - actual_pressure_closest)
 
                             this_cell_interpolation_vertical = profiles[k , best_index] + vertical_weight * (profiles[k, second_index] - profiles[k, best_index])
-                            result[j] += data_to_do['weights'][ready_mask][i][k] * this_cell_interpolation_vertical
+                            result[j] += data_to_do.weights[ready_mask][i][k] * this_cell_interpolation_vertical
                     ICON_profile[i, :] = result
             
             # Linearly interpolate the CAMS data to the current timestep, as CAMS data is only every 6 hours
@@ -995,25 +1028,32 @@ def tracking_CH4_satellite(datetime, CH4_EMIS_np, CH4_BG_np, pres_ifc_np, pres_n
 
             # Now as we get to the get coef funciton we need to turn around all of the data to: from surface to TOA
             # Also the computation afterwards is based on Michael Steiners computation
-            pb_ret = data_to_do['pavg0'][ready_mask]
+            pb_ret = data_to_do.pavg0[ready_mask]
             coef_matrix = []
             # pb_ret = pb_ret[:, ::-1]
             pb_profile = pb_profile[:, ::-1]
             tracer_profile = tracer_profile[:, ::-1]
             for i in range(pb_ret.shape[0]):
-                print(f"pb_ret.shape: {pb_ret[i].shape}, pb_profile.shape: {pb_profile[i].shape}, pb_ret: {pb_ret[i]}, pb_profile: {pb_profile[i]}", file=sys.stderr)
+                # print(f"pb_ret.shape: {pb_ret[i].shape}, pb_profile.shape: {pb_profile[i].shape}, pb_ret: {pb_ret[i]}, pb_profile: {pb_profile[i]}", file=sys.stderr)
                 coefs = get_int_coefs(pb_ret[i], pb_profile[i])
 
                 coef_matrix.append(coefs)
 
             coef_matrix = np.array(coef_matrix)
 
-            pwf = data_to_do['pw'][ready_mask]
+            pwf = data_to_do.pw[ready_mask]
             # pwf = pwf[:, ::-1]
-            averaging_kernel = data_to_do['ak'][ready_mask]
+            averaging_kernel = data_to_do.ak[ready_mask]
             # averaging_kernel = averaging_kernel[:, ::-1]
-            important_stuff = data_to_do['qa0'][ready_mask]
+            important_stuff = data_to_do.qa0[ready_mask]
             # important_stuff = important_stuff[:, ::-1]
+
+            if pb_ret[0, 0] < pb_ret[0, -1]:
+                pb_ret = pb_ret[:, ::-1]
+                pwf = pwf[:, ::-1]
+                averaging_kernel = averaging_kernel[:, ::-1]
+                important_stuff = important_stuff[:, ::-1]
+
             avpw = pwf * averaging_kernel
             prior_col = np.sum(pwf * important_stuff, axis=1)
 
@@ -1022,25 +1062,19 @@ def tracking_CH4_satellite(datetime, CH4_EMIS_np, CH4_BG_np, pres_ifc_np, pres_n
 
 
             num_ready = np.sum(ready_mask) # Count how many points are ready
-            done_counter = data_done['counter']
+            done_counter = data_done.counter
 
             # Add all of the done points to the done arrays
-            data_done['lon'][done_counter:done_counter + num_ready] = data_to_do['lon'][ready_mask]
-            data_done['lat'][done_counter:done_counter + num_ready] = data_to_do['lat'][ready_mask]
-            data_done['timestep'][done_counter:done_counter + num_ready] = data_to_do['timestep'][ready_mask]
-            data_done['CH4'][done_counter:done_counter + num_ready] = tc
+            data_done.lon[done_counter:done_counter + num_ready] = data_to_do.lon[ready_mask]
+            data_done.lat[done_counter:done_counter + num_ready] = data_to_do.lat[ready_mask]
+            data_done.timestep[done_counter:done_counter + num_ready] = data_to_do.timestep[ready_mask]
+            data_done.CH4[done_counter:done_counter + num_ready] = tc
 
             # Keep count of how many satellite points are done
-            data_done['counter'] += num_ready
+            data_done.counter += num_ready
 
             # Only keep the satellite points that aren't done yet
             keep_mask = ~ready_mask
-
-            keys_to_filter = [
-                'lon', 'lat', 'timestep',
-                'jc_loc', 'jb_loc', 'pavg0',
-                'qa0', 'pw', 'ak', 'cams_index', 'frac_cams', 'weights'
-            ]
-            for key in keys_to_filter: 
-                data_to_do[key] = data_to_do[key][keep_mask]
+            
+            data_to_do.apply_mask(keep_mask)
         

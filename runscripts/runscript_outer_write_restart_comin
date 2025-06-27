@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #SBATCH --job-name="Romania6km"
-#SBATCH --account=em05
+#SBATCH --account=s1317
 #SBATCH --time="0:30:00"
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-core=1

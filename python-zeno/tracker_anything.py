@@ -81,7 +81,7 @@ dict_vars = config['dict_vars']
 dict_vars_cif_sat = config['dict_vars_cif_sat']
 dict_vars_cif_stations = config['dict_vars_cif_stations']
 do_monitoring_stations = config['do_monitoring_stations']
-do_satellite = config['do_satellite']
+do_satellite_CH4 = config['do_satellite_CH4']
 do_satellite_cif = config['do_satellite_cif']
 do_stations_cif = config['do_stations_cif']
 tropomi_filename = config['tropomi_filename']
@@ -93,7 +93,7 @@ path_to_input_stations_cif = config['path_to_input_stations_cif']
 file_name_output_stations_cif = config['file_name_output_stations_cif']
 file_name_output_sat_cif = config['file_name_output_sat_cif']
 file_name_output = config['file_name_output']
-file_name_output_sat = config['file_name_output_sat']
+file_name_output_sat_CH4 = config['file_name_output_sat_CH4']
 accepted_distance = config['accepted_distance']
 
 plugin_dir = config['plugin_dir']
@@ -154,12 +154,12 @@ def data_constructor():
             data[variable] = local_data
 
         
-    if do_satellite:
+    if do_satellite_CH4:
         # Request to get the wanted variables (i.e. the EMIS and the BG. Also the pressure). We only want to read the data, not write
         CH4_emis = comin.var_get(entry_points, ("CH4_EMIS", jg), comin.COMIN_FLAG_READ)
         CH4_bg = comin.var_get(entry_points, ("CH4_BG", jg), comin.COMIN_FLAG_READ)
         pres_ifc = comin.var_get(entry_points, ("pres_ifc", jg), comin.COMIN_FLAG_READ)
-    if do_satellite or do_satellite_cif:
+    if do_satellite_CH4 or do_satellite_cif:
         pres = comin.var_get(entry_points, ("pres", jg), comin.COMIN_FLAG_READ)
 
     if do_satellite_cif:
@@ -260,10 +260,10 @@ def stations_init():
         data_monitoring_stations_to_do, data_monitoring_stations_done = read_in_points(comm, tree, decomp_domain, clon, hhl, NUMBER_OF_NN, path_to_input_nc, run_start, run_stop, data, accepted_distance)
         write_header_points(comm, file_name_output, dict_vars)
 
-    if(do_satellite):
+    if(do_satellite_CH4):
         message("Now reading in and locating the correct indices for the satellite data", msgrank)
-        data_satellite_to_do, data_satellite_done, cams_files_dict = read_in_satellite_data(comm, tree, decomp_domain, clon, run_start, run_stop, tropomi_filename, cams_base_path, cams_params_file, accepted_distance, icon_polygons)
-        write_header_sat(comm, file_name_output_sat)
+        data_satellite_to_do, data_satellite_done, cams_files_dict = read_in_satellite_data_CH4(comm, tree, decomp_domain, clon, run_start, run_stop, tropomi_filename, cams_base_path, cams_params_file, accepted_distance, icon_polygons)
+        write_header_sat(comm, file_name_output_sat_CH4)
 
     if(do_satellite_cif):
         message("Now reading in and locating the correct indices for the cif satellite data", msgrank)
@@ -287,7 +287,7 @@ def read_in_cams():
     datetime = comin.current_get_datetime()
 
     # Read in the CAMS data if it is the right time
-    if do_satellite and (pd.to_datetime(datetime).time() == datetimelib.time(0,0) or pd.to_datetime(datetime).time() == datetimelib.time(6,0) or pd.to_datetime(datetime).time() == datetimelib.time(12,0) or pd.to_datetime(datetime).time() == datetimelib.time(18,0)):
+    if do_satellite_CH4 and (pd.to_datetime(datetime).time() == datetimelib.time(0,0) or pd.to_datetime(datetime).time() == datetimelib.time(6,0) or pd.to_datetime(datetime).time() == datetimelib.time(12,0) or pd.to_datetime(datetime).time() == datetimelib.time(18,0)):
         cams_prev_data, cams_next_data = update_cams(datetime, cams_files_dict, cams_prev_data, cams_next_data)
 
 
@@ -313,7 +313,7 @@ def tracking():
                 local_data.append(np.asarray(item))
             data_np[variable] = local_data
 
-    if do_satellite:
+    if do_satellite_CH4:
         CH4_EMIS_np = np.asarray(CH4_emis)
         CH4_BG_np = np.asarray(CH4_bg)
         pres_np = np.asarray(pres)
@@ -339,7 +339,7 @@ def tracking():
     # Monitoring of the variables for the different problems
     if do_monitoring_stations:
         tracking_points(datetime, data_monitoring_stations_to_do, data_monitoring_stations_done, data_np, dict_vars, operations_dict)
-    if do_satellite:
+    if do_satellite_CH4:
         tracking_CH4_satellite(datetime, CH4_EMIS_np, CH4_BG_np, pres_ifc_np, pres_np, data_satellite_to_do, data_satellite_done, cams_prev_data, cams_next_data)
     if do_satellite_cif:
         tracking_satellite_cif_pressures(datetime, data_sat_cif_to_do, data_sat_cif_done, data_np_sat_cif, dict_vars_cif_sat, operations_dict, pres_np, num_levels)
@@ -352,12 +352,12 @@ def tracking():
     if (elapsed_time >= time_interval_writeout): # If we are above the time intervall writeout, we want to write out
         if do_monitoring_stations:
             write_points(comm, data_monitoring_stations_done, dict_vars, file_name_output)
-        if do_satellite:
-            write_satellite(comm, data_satellite_done, file_name_output_sat)
+        if do_satellite_CH4:
+            write_satellite_CH4(comm, data_satellite_done, file_name_output_sat_CH4)
         if do_satellite_cif:
             write_satellite_cif(comm, data_sat_cif_done, file_name_output_sat_cif)
         if do_stations_cif:
-            write_points_cif(comm, data_stations_cif_done, dict_vars_cif_stations, file_name_output_stations_cif)
+            write_points_cif(comm, data_stations_cif_done, file_name_output_stations_cif)
 
         # Reset data
         number_of_timesteps = 0
