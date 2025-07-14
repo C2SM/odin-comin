@@ -62,7 +62,7 @@ class SatelliteDataToDoGeneral:
                 setattr(self, key, value[mask])
 
 class SatelliteDataToDoCH4:
-    def __init__(self, lon, lat, timestep, jc_loc, jb_loc, weights, qa0, ak, pw, pavg0, cams_index, frac_cams, hyam, hybm, hyai, hybi):
+    def __init__(self, lon, lat, timestep, jc_loc, jb_loc, weights, qa0, ak, pw, pavg0, cams_index, frac_cams, hyam, hybm, hyai, hybi, covered_areas):
         self.lon = lon
         self.lat = lat
         self.timestep = timestep
@@ -80,6 +80,7 @@ class SatelliteDataToDoCH4:
         self.hybm = hybm
         self.hyai = hyai
         self.hybi = hybi
+        self.covered_areas = covered_areas
 
     def filter_ready(self, current_time):
         mask = self.timestep <= np.datetime64(current_time)
@@ -107,12 +108,13 @@ class SatelliteDataDoneGeneral:
                 setattr(self, key, value[mask])
 
 class SatelliteDataDoneCH4:
-    def __init__(self, lon, lat, timestep, CH4, counter):
+    def __init__(self, lon, lat, timestep, CH4, counter, covered_areas):
         self.lon = lon
         self.lat = lat
         self.timestep = timestep
         self.CH4 = CH4
         self.counter = counter
+        self.covered_areas = covered_areas
 
     def apply_mask(self, mask):
         for key in vars(self):
@@ -281,6 +283,7 @@ def find_stations_satellite_CH4(lons, lats, timesteps, tree, decomp_domain, clon
     cams_indices_local = []
     fracs_cams_local = []
     weights_all = []
+    covered_areas = []
 
     # Loop through every station
     for i in range(len(lons)):
@@ -304,12 +307,14 @@ def find_stations_satellite_CH4(lons, lats, timesteps, tree, decomp_domain, clon
             tropomi_polygon = Polygon(zip(np.deg2rad(longitude_corners[:, i]), np.deg2rad(latitude_corners[:, i])))
 
             possible_matches = tree_corners.query(tropomi_polygon)
+            covered_area = 0.0
             for match in possible_matches:
                 if tropomi_polygon.intersects(icon_polygons[match]):
                     overlap_area = tropomi_polygon.intersection(icon_polygons[match]).area
                     # if a ICON cell is at least covered by some percentage with the obs, then count this cell
                     if icon_polygons[match].area > 0.0 and overlap_area > 0.0:
                         jc_r, jb_r = np.unravel_index(match, clon.shape)
+                        covered_area += overlap_area / tropomi_polygon.area
                         jc_row.append(jc_r)
                         jb_row.append(jb_r)
                         weight_row.append(overlap_area / tropomi_polygon.area)
@@ -353,6 +358,7 @@ def find_stations_satellite_CH4(lons, lats, timesteps, tree, decomp_domain, clon
             cams_indices_local.append(cams_index)
             fracs_cams_local.append(frac_cams)
             weights_all.append(weight_row)
+            covered_areas.append(covered_area)
 
     # Pad all of the potentially different lengths of lists
     jc_locs = pad_list_of_lists_int(jc_locs, pad_value=0)
@@ -371,7 +377,8 @@ def find_stations_satellite_CH4(lons, lats, timesteps, tree, decomp_domain, clon
             np.array(qa0_local, dtype = np.float64), 
             np.array(cams_indices_local, dtype = np.int32), 
             np.array(fracs_cams_local, dtype = np.float64), 
-            weights_all)
+            weights_all, 
+            np.array(covered_areas))
 
 def write_header_sat(comm, file_name):
     """! Writes the header for the output nc file of the satellite CH4 measurements
@@ -387,6 +394,7 @@ def write_header_sat(comm, file_name):
         lon = ncfile_sat.createVariable('lon', 'f8',('index',) )
         lat = ncfile_sat.createVariable('lat', 'f8',('index',) )
         ch4 = ncfile_sat.createVariable('CH4', 'f8',('index',) )
+        covered_area = ncfile_sat.createVariable('covered_area', 'f8', ('index',) )
         ncfile_sat.close()
     
 def write_header_sat_cif(comm, file_name, num_levels):
@@ -483,6 +491,7 @@ def write_satellite_CH4(comm, done_data: SatelliteDataDoneCH4, file_name_output)
             "lat": done_data.lat[:done_counter],
             "date": done_data.timestep[:done_counter],
             "CH4": done_data.CH4[:done_counter],
+            "covered_area": done_data.covered_areas[:done_counter],
         }
 
     # Gather the local data to root 0, such that one process has all data that needs to be written out
@@ -495,6 +504,7 @@ def write_satellite_CH4(comm, done_data: SatelliteDataDoneCH4, file_name_output)
             "lat": [],
             "date": [],
             "CH4": [],
+            "covered_area": [],
         }
         # Flatten the data and put them into one single list
         for d in gathered_done_data:
@@ -542,9 +552,13 @@ def read_in_satellite_data_CH4(comm, tree, decomp_domain, clon, start_model, end
 
     # Create the dictionary for the cams file names
     dt = start_model.replace(hour=(start_model.hour // 6))
-    while dt < end_model:
+    while dt <= end_model:
         dt_str = dt.strftime("%Y%m%d%H")
-        fname = f"cams73_v22r2_ch4_conc_surface_inst_{dt_str}_lbc.nc"
+        if dt.month == 1:
+            fname = f"cams73_v22r2_ch4_conc_surface_inst_{dt_str}.nc"
+        else:
+            fname = f"cams73_v22r2_ch4_conc_surface_inst_{dt_str}_lbc.nc"
+        fname = f"cams73_v22r2_ch4_conc_surface_inst_{dt_str}.nc"
         full_path = os.path.join(cams_base_path, fname)
         cams_files_dict[dt] = full_path
         dt += datetimelib.timedelta(hours=6)
@@ -637,7 +651,7 @@ def read_in_satellite_data_CH4(comm, tree, decomp_domain, clon, start_model, end
     # Create the icon polygon tree
     tree_corners = STRtree(icon_polygons)
 
-    (jc_loc_satellite, jb_loc_satellite, satellite_lons, satellite_lats, satellite_timestep, pavg0_sat, pw_sat, ak_sat, qa0_sat, cams_indices_sat, fracs_cams, weights_sat) = find_stations_satellite_CH4(satellite_lons, satellite_lats, obs_time_dts, tree, decomp_domain, clon, pavg0_sat, pw_sat, ak_sat, qa0_sat, cams_tree, accepted_distance, longitude_corners, latitude_corners, tree_corners, icon_polygons)
+    (jc_loc_satellite, jb_loc_satellite, satellite_lons, satellite_lats, satellite_timestep, pavg0_sat, pw_sat, ak_sat, qa0_sat, cams_indices_sat, fracs_cams, weights_sat, covered_areas) = find_stations_satellite_CH4(satellite_lons, satellite_lats, obs_time_dts, tree, decomp_domain, clon, pavg0_sat, pw_sat, ak_sat, qa0_sat, cams_tree, accepted_distance, longitude_corners, latitude_corners, tree_corners, icon_polygons)
    
     N_satellite_points = satellite_lons.shape[0] # Amount of satellite points in the local PE
 
@@ -646,18 +660,19 @@ def read_in_satellite_data_CH4(comm, tree, decomp_domain, clon, start_model, end
     done_lats_sat = np.empty(N_satellite_points, dtype=np.float64)
     done_times_sat = np.empty(N_satellite_points, dtype='datetime64[ns]')
     done_CH4_sat = np.empty(N_satellite_points, dtype=np.float64)
+    done_covered_areas = np.empty(N_satellite_points, dtype=np.float64)
     done_counter_sat = 0
 
     # # Load all data into Dicts
     # keys_to_do = ['lon', 'lat', 'timestep', 'jc_loc', 'jb_loc', 'pavg0', 'pw', 'ak', 'qa0', 'cams_index', 'frac_cams', 'hyam', 'hybm', 'hyai', 'hybi', 'weights']
     # values_to_do = [satellite_lons, satellite_lats, satellite_timestep, jc_loc_satellite, jb_loc_satellite, pavg0_sat, pw_sat, ak_sat, qa0_sat, cams_indices_sat, fracs_cams, hyam, hybm, hyai, hybi, weights_sat]
     # local_data_to_do = {keys_to_do[i]:values_to_do[i] for i in range(len(keys_to_do))}
-    local_data_to_do = SatelliteDataToDoCH4(satellite_lons, satellite_lats, satellite_timestep, jc_loc_satellite, jb_loc_satellite, weights_sat, qa0_sat, ak_sat, pw_sat, pavg0_sat, cams_indices_sat, fracs_cams, hyam, hybm, hyai, hybi)
+    local_data_to_do = SatelliteDataToDoCH4(satellite_lons, satellite_lats, satellite_timestep, jc_loc_satellite, jb_loc_satellite, weights_sat, qa0_sat, ak_sat, pw_sat, pavg0_sat, cams_indices_sat, fracs_cams, hyam, hybm, hyai, hybi, covered_areas)
 
     # keys_done = ['lon', 'lat', 'timestep', 'CH4', 'counter']
     # values_done = [done_lons_sat, done_lats_sat, done_times_sat, done_CH4_sat, done_counter_sat]
     # local_data_done = {keys_done[i]:values_done[i] for i in range(len(keys_done))}
-    local_data_done = SatelliteDataDoneCH4(done_lons_sat, done_lats_sat, done_times_sat, done_CH4_sat, done_counter_sat)
+    local_data_done = SatelliteDataDoneCH4(done_lons_sat, done_lats_sat, done_times_sat, done_CH4_sat, done_counter_sat, done_covered_areas)
     
     return local_data_to_do, local_data_done, cams_files_dict # Return all of the Data in Dicts
 
@@ -926,11 +941,11 @@ def tracking_CH4_satellite(datetime, CH4_EMIS_np, CH4_BG_np, pres_ifc_np, pres_n
             pb_mod_mc =(pres_np[jc_ready_sat[:, 0], :, jb_ready_sat[:, 0]].squeeze()) / 1.e2
 
             cams_indices_ready = cams_indices_ready.flatten()
-            CAMS_obs_prev = cams_prev_data["CH4"].isel(time=0, ncells = cams_indices_ready).values[::-1].T
-            CAMS_obs_next = cams_next_data["CH4"].isel(time=0, ncells = cams_indices_ready).values[::-1].T
+            CAMS_obs_prev = cams_prev_data["CH4"].isel(time=0, cell = cams_indices_ready).values[::-1].T
+            CAMS_obs_next = cams_next_data["CH4"].isel(time=0, cell = cams_indices_ready).values[::-1].T
 
-            CAMS_aps_prev = cams_prev_data["ps"].isel(time=0, ncells = cams_indices_ready).values
-            CAMS_aps_next = cams_next_data["ps"].isel(time=0, ncells = cams_indices_ready).values
+            CAMS_aps_prev = cams_prev_data["ps"].isel(time=0, cell = cams_indices_ready).values
+            CAMS_aps_next = cams_next_data["ps"].isel(time=0, cell = cams_indices_ready).values
 
             CAMS_aps_prev_reshaped = CAMS_aps_prev[:, np.newaxis]
             CAMS_aps_next_reshaped = CAMS_aps_next[:, np.newaxis]
@@ -1069,6 +1084,7 @@ def tracking_CH4_satellite(datetime, CH4_EMIS_np, CH4_BG_np, pres_ifc_np, pres_n
             data_done.lat[done_counter:done_counter + num_ready] = data_to_do.lat[ready_mask]
             data_done.timestep[done_counter:done_counter + num_ready] = data_to_do.timestep[ready_mask]
             data_done.CH4[done_counter:done_counter + num_ready] = tc
+            data_done.covered_areas[done_counter:done_counter + num_ready] = data_to_do.covered_areas[ready_mask]
 
             # Keep count of how many satellite points are done
             data_done.counter += num_ready
