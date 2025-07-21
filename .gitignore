@@ -4,6 +4,4 @@ simulation_outer_domain
 natural_earth
 .vscode
 __pycache__
-CAMS
-ICON_observations
 venv-nc-gen
