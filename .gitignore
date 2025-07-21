@@ -1,7 +1,7 @@
 slurm-*.out
 venv-plot
 simulation_outer_domain
-icbc_outer
+natural_earth
 .vscode
 __pycache__
 CAMS
