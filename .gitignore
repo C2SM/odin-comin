@@ -3,5 +3,9 @@ venv-plot
 simulation_outer_domain
 natural_earth
 .vscode
+LBC
+LBC_old
+LBCold
+cams73_v22r2_ch4_conc_surface_inst_201910.nc
 __pycache__
 venv-nc-gen
