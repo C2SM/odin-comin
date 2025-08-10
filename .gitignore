@@ -9,3 +9,6 @@ LBCold
 cams73_v22r2_ch4_conc_surface_inst_201910.nc
 __pycache__
 venv-nc-gen
+simulation_outer_domain_january_sat
+simulation_outer_domain_station
+simulation_outer_domain_flights

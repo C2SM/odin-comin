@@ -1,32 +1,51 @@
-import netCDF4 as nc
+import matplotlib
+matplotlib.use('Agg')  # Non-GUI backend for headless environments
+
 import matplotlib.pyplot as plt
-from datetime import datetime, timedelta
+from netCDF4 import Dataset, num2date
+import numpy as np
 
-# Path to your NetCDF file
-filename = 'tracked_ch4.nc'
+# === CONFIGURATION ===
+file_name = "output.nc"  # Replace with the actual path to your NetCDF file
 
-# Open NetCDF file
-ds = nc.Dataset(filename)
+# === LOAD DATA ===
+with Dataset(file_name, mode='r') as nc:
+    etime = nc.variables['etime'][:]
+    time_units = nc.variables['etime'].units
+    calendar = nc.variables['etime'].calendar
 
-# Read time and CH4 values
-time_var = ds.variables['time'][:]
-ch4_var = ds.variables['avg_CH4'][0, :]  # Assuming one station
+    # Convert numeric times to datetime objects
+    # dates = num2date(etime, units=time_units, calendar=calendar)
+    dates = num2date(etime, units=time_units, calendar=calendar)
 
-# Convert time from seconds since 2019-01-01 to datetime
-start_time = datetime(2019, 1, 1)
-time = [start_time + timedelta(seconds=int(t)) for t in time_var]
+    # Convert to datetime.datetime objects
+    from datetime import datetime
+    dates = [datetime(d.year, d.month, d.day, d.hour, d.minute, d.second) for d in dates]
 
-# Plotting
-plt.figure(figsize=(10, 5))
-plt.plot(time, ch4_var, marker='o', linestyle='-', markersize=3)  # Reduced markersize
+    # Load CH4 and Temperature data
+    ch4 = nc.variables['CH4'][:]
+    temp = nc.variables['Temp'][:]
+
+# === PLOT CH4 ===
+plt.figure()
+plt.plot(dates, ch4, label='CH4 (ppb)')
+plt.title('CH₄ Concentration Time Series')
 plt.xlabel('Time')
-plt.ylabel('CH4 concentration (ppb)')
-plt.title('CH4 Concentration Over Time')
+plt.ylabel('CH₄ Concentration (ppb)')
+plt.legend()
 plt.grid(True)
 plt.tight_layout()
+plt.xticks(rotation=45)
+plt.savefig('ch4_timeseries.png')
 
-# Save plot
-output_file = 'ch4_station_example.png'
-plt.savefig(output_file)
-
-print(f"Plot saved to {output_file}")
+# === PLOT TEMPERATURE ===
+plt.figure()
+plt.plot(dates, temp, label='Temperature (K)', color='orange')
+plt.title('Temperature Time Series')
+plt.xlabel('Time')
+plt.ylabel('Temperature (K)')
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.xticks(rotation=45)
+plt.savefig('temperature_timeseries.png')

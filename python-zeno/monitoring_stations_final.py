@@ -79,15 +79,15 @@ class StationDataToDo:
         for variable in dict_vars:
             self.dict_measurement[variable] = np.zeros(lon.shape, dtype=np.float64)
 
-    # def filter_ready(self, current_time):
-    #     mask = self.timestep <= np.datetime64(current_time)
-    #     return mask
-
     def apply_mask(self, mask):
         for key in vars(self):
             value = getattr(self, key)
             if isinstance(value, np.ndarray) and value.shape[0] == mask.shape[0]:
                 setattr(self, key, value[mask])
+        # Also apply the mask to each variable in dict_measurement
+        for variable, array in self.dict_measurement.items():
+            if isinstance(array, np.ndarray) and array.shape[0] == mask.shape[0]:
+                self.dict_measurement[variable] = array[mask]
     
 class StationDataDoneCIF:
     def __init__(self, lon, lat, elevation, sampling_height, sampling_strategy, stime, etime, counter, id, parameter, obs):
