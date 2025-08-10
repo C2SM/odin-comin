@@ -3,6 +3,7 @@ venv-plot
 simulation_outer_domain
 natural_earth
 .vscode
+IC
 LBC
 LBC_old
 LBCold
