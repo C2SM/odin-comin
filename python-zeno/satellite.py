@@ -1,31 +1,33 @@
-##
-# @file satellite.py
-#
-# @brief Tracking any CH4 data to compare to satellite data
-#
-# @section description_satellite Description
-# Tracking any CH4 data to compare to satellite data.
-#
-# @section libraries_satellite Libraries/Modules
-# - numpy library
-# - xarray library
-# - netCDF4 library
-#   - Access to Dataset
-# - pandas library
-#   - Access to pandas.to_datetime and pandas.read_csv
-# - os library
-# - sys library
-# - datetime library
-# - scipy library
-#   - Access to scipy.spatial.KDTree
-# - shapely library
-#   - Access to shapely.Polygon and shapely.STRtree
-# - get_int_coefs module (local)
-#
-# @section author_satellite Author(s)
-# - Created by Zeno Hug on 06/18/2025.
-#
-# Copyright (c) 2025 Empa.  All rights reserved.
+"""! @file satellite.py
+
+@brief Tracking data for comparison with satellite observations.
+
+@section description_satellite Description
+Tracking data to compare to satellite data.
+
+@section libraries_satellite Libraries/Modules
+- numpy
+- xarray
+- netCDF4
+  - Access to Dataset
+- pandas
+  - Access to pandas.to_datetime and pandas.read_csv
+- os
+- sys
+- datetime
+- scipy
+  - Access to scipy.spatial.KDTree
+- shapely
+  - Access to shapely.Polygon and shapely.STRtree
+- get_int_coefs (local module)
+
+@section author_satellite Author(s)
+- Created by Zeno Hug on 08/11/2025.
+
+Copyright (c) 2025 Empa. All rights reserved.
+"""
+
+
 
 import numpy as np
 import xarray as xr
@@ -38,11 +40,32 @@ from get_int_coefs import *
 import sys
 import os
 
-## Constants:
+## Constants (molar masses; dry air and CH4)
 Mda, MCH4 = 28.964, 16.04
 
 class SatelliteDataToDoGeneral:
+    """!Container for pending satellite collocations (generic parameter).
+
+    Attributes:
+        lon (np.ndarray): Longitudes of satellite ground pixels.
+        lat (np.ndarray): Latitudes of satellite ground pixels.
+        timestep (np.ndarray): Observation datetimes.
+        jc_loc (np.ndarray): JC indices of contributing ICON cells.
+        jb_loc (np.ndarray): JB indices of contributing ICON cells.
+        parameter (np.ndarray): Parameter name per observation.
+        weights (np.ndarray): Horizontal interpolation weights per obs.
+    """
     def __init__(self, lon, lat, timestep, jc_loc, jb_loc, parameter, weights):
+        """!Initialize a SatelliteDataToDoGeneral instance.
+
+        @param lon Longitudes.
+        @param lat Latitudes.
+        @param timestep Observation datetimes.
+        @param jc_loc JC indices.
+        @param jb_loc JB indices.
+        @param parameter Parameter names.
+        @param weights Horizontal interpolation weights.
+        """
         self.lon = lon
         self.lat = lat
         self.timestep = timestep
@@ -52,17 +75,56 @@ class SatelliteDataToDoGeneral:
         self.weights = weights
 
     def filter_ready(self, current_time):
+        """!Return a mask of observations ready to be processed.
+
+        @param current_time Current model time.
+        @return Boolean mask where ``timestep <= current_time``.
+        """
         mask = self.timestep <= np.datetime64(current_time)
         return mask
 
     def apply_mask(self, mask):
+        """!Apply a boolean mask to all array attributes with matching length.
+
+        @param mask Boolean NumPy array indicating which elements to keep.
+        """
         for key in vars(self):
             value = getattr(self, key)
             if isinstance(value, np.ndarray) and value.shape[0] == mask.shape[0]:
                 setattr(self, key, value[mask])
 
 class SatelliteDataToDoCH4:
+    """!Container for pending CH4 satellite collocations with retrieval metadata.
+
+    Attributes:
+        lon, lat (np.ndarray): Ground pixel positions.
+        timestep (np.ndarray): Observation datetimes.
+        jc_loc, jb_loc (np.ndarray): ICON cell indices per obs.
+        weights (np.ndarray): Horizontal interpolation weights.
+        qa0, ak, pw, pavg0 (np.ndarray): Retrieval vectors/matrices.
+        cams_index (np.ndarray): CAMS nearest-index per obs.
+        frac_cams (np.ndarray): Fraction between 6-hour CAMS steps [0,1].
+        hyam, hybm, hyai, hybi (np.ndarray): CAMS hybrid coeffs.
+        covered_areas (np.ndarray): Fractional coverage over ICON cells.
+    """
     def __init__(self, lon, lat, timestep, jc_loc, jb_loc, weights, qa0, ak, pw, pavg0, cams_index, frac_cams, hyam, hybm, hyai, hybi, covered_areas):
+        """!Initialize a SatelliteDataToDoCH4 instance.
+
+        @param lon Longitudes.
+        @param lat Latitudes.
+        @param timestep Observation datetimes.
+        @param jc_loc JC indices.
+        @param jb_loc JB indices.
+        @param weights Horizontal interpolation weights.
+        @param qa0 Retrieval prior (per level).
+        @param ak Averaging kernel (per level).
+        @param pw Pressure weighting function (per level).
+        @param pavg0 Pressure grid of retrieval (interfaces or midpoints).
+        @param cams_index CAMS nearest grid index per obs.
+        @param frac_cams Linear interpolation fraction between CAMS steps.
+        @param hyam, hybm, hyai, hybi CAMS hybrid coefficients.
+        @param covered_areas Fractional area of satellite pixel covering ICON cells.
+        """
         self.lon = lon
         self.lat = lat
         self.timestep = timestep
@@ -83,17 +145,44 @@ class SatelliteDataToDoCH4:
         self.covered_areas = covered_areas
 
     def filter_ready(self, current_time):
+        """!Return a mask of observations ready to be processed.
+
+        @param current_time Current model time.
+        @return Boolean mask where ``timestep <= current_time``.
+        """
         mask = self.timestep <= np.datetime64(current_time)
         return mask
 
     def apply_mask(self, mask):
+        """!Apply a boolean mask to all array attributes with matching length.
+
+        @param mask Boolean NumPy array indicating which elements to keep.
+        """
         for key in vars(self):
             value = getattr(self, key)
             if isinstance(value, np.ndarray) and value.shape[0] == mask.shape[0]:
                 setattr(self, key, value[mask])
 
 class SatelliteDataDoneGeneral:
+    """!Container for completed satellite column results (generic parameter).
+
+    Attributes:
+        lon, lat (np.ndarray): Positions of completed observations.
+        timestep (np.ndarray): Observation datetimes.
+        parameter (np.ndarray): Parameter names.
+        measurement (np.ndarray): Column vectors per obs (shape: N x level).
+        counter (int): Number of filled entries.
+    """
     def __init__(self, lon, lat, timestep, parameter, measurement, counter):
+        """!Initialize a SatelliteDataDoneGeneral instance.
+
+        @param lon Longitudes.
+        @param lat Latitudes.
+        @param timestep Observation datetimes.
+        @param parameter Parameter names.
+        @param measurement Column values per level.
+        @param counter Number of filled entries.
+        """
         self.lon = lon
         self.lat = lat
         self.timestep = timestep
@@ -102,13 +191,35 @@ class SatelliteDataDoneGeneral:
         self.counter = counter
 
     def apply_mask(self, mask):
+        """!Apply a boolean mask to all array attributes with matching length.
+
+        @param mask Boolean NumPy array indicating which elements to keep.
+        """
         for key in vars(self):
             value = getattr(self, key)
             if isinstance(value, np.ndarray) and value.shape[0] == mask.shape[0]:
                 setattr(self, key, value[mask])
 
 class SatelliteDataDoneCH4:
+    """!Container for completed CH4 satellite comparisons (ready to write out).
+
+    Attributes:
+        lon, lat (np.ndarray): Positions of completed observations.
+        timestep (np.ndarray): Observation datetimes.
+        CH4 (np.ndarray): Retrieved/compared total columns (per obs).
+        counter (int): Number of filled entries.
+        covered_areas (np.ndarray): Fractional coverage written alongside.
+    """
     def __init__(self, lon, lat, timestep, CH4, counter, covered_areas):
+        """!Initialize a SatelliteDataDoneCH4 instance.
+
+        @param lon Longitudes.
+        @param lat Latitudes.
+        @param timestep Observation datetimes.
+        @param CH4 CH4 column values.
+        @param counter Number of filled entries.
+        @param covered_areas Fractional coverage per obs.
+        """
         self.lon = lon
         self.lat = lat
         self.timestep = timestep
@@ -117,16 +228,21 @@ class SatelliteDataDoneCH4:
         self.covered_areas = covered_areas
 
     def apply_mask(self, mask):
+        """!Apply a boolean mask to all array attributes with matching length.
+
+        @param mask Boolean NumPy array indicating which elements to keep.
+        """
         for key in vars(self):
             value = getattr(self, key)
             if isinstance(value, np.ndarray) and value.shape[0] == mask.shape[0]:
                 setattr(self, key, value[mask])
 
 def pad_list_of_lists_float(list_of_lists, pad_value=0.0):
-    """! Pads a list of lists to a numpy array, with pad value and of type float
-    @param list_of_lists    A list of lists wanting to be padded and converted to a numpy array
-    @param pad_value        The value with which should be padded
-    @return  The padded numpy array
+    """!Pad a list of lists to a 2D float NumPy array with a given pad value.
+
+    @param list_of_lists List of lists to pad/stack.
+    @param pad_value Value used to pad shorter rows.
+    @return 2D NumPy array (dtype=float64).
     """
     if not list_of_lists:
         return np.array([], dtype=np.float64).reshape(0, 0)
@@ -136,10 +252,11 @@ def pad_list_of_lists_float(list_of_lists, pad_value=0.0):
     return np.array(padded_lists, dtype=np.float64)
 
 def pad_list_of_lists_int(list_of_lists, pad_value=0):
-    """! Pads a list of lists to a numpy array, with pad value and of type int
-    @param list_of_lists    A list of lists wanting to be padded and converted to a numpy array
-    @param pad_value        The value with which should be padded
-    @return  The padded numpy array
+    """!Pad a list of lists to a 2D int NumPy array with a given pad value.
+
+    @param list_of_lists List of lists to pad/stack.
+    @param pad_value Value used to pad shorter rows.
+    @return 2D NumPy array (dtype=int32).
     """
     if not list_of_lists:
         return np.array([], dtype=np.int32).reshape(0, 0)
@@ -150,10 +267,11 @@ def pad_list_of_lists_int(list_of_lists, pad_value=0):
 
 
 def datetime_to_milliseconds_since_reference(arr, reference_str="2019-01-01T11:14:35.629"):
-    """! Converts datetime 64 to milliseconds since a reference time.
-    @param arr              An array of type datetime 64  to convert
-    @param reference_str    Reference time in string format
-    @return  The converted array
+    """!Convert numpy datetime64 values to milliseconds since a reference timestamp.
+
+    @param arr Array-like of ``np.datetime64`` values.
+    @param reference_str Reference time ISO string (default "2019-01-01T11:14:35.629").
+    @return Array of uint64 milliseconds since reference.
     """
     reference = np.datetime64(reference_str, 'ms')
     
@@ -164,26 +282,38 @@ def datetime_to_milliseconds_since_reference(arr, reference_str="2019-01-01T11:1
 
 
 def lonlat2xyz(lon, lat):
-    """! Short helper function for calculating xyz coordinates from longitues and latitudes
-    @param lon   An array or single value of longitudes to convert to xyz coordinates
-    @param lat   An array or single value of latitudes to convert to xyz coordinates
-    @return  converted xyz values as a tuple
+    """!Convert spherical lon/lat (radians) to unit-sphere Cartesian coordinates.
+
+    @param lon Longitude(s) in radians.
+    @param lat Latitude(s) in radians.
+    @return Tuple ``(x, y, z)`` arrays/scalars.
     """
     clat = np.cos(lat) 
     return clat * np.cos(lon), clat * np.sin(lon), np.sin(lat)
 
 def find_stations_satellite_cif(lons, lats, timesteps, parameters, tree, decomp_domain, clon, number_of_cells, accepted_distance):
-    """! Find the satellite observation points for cif on each PE in the own domain and return all of the relevant data needed for computation. All lists need to have the same length
-    @param lons                 A list of longitudes of points to locate
-    @param lats                 A list of latitudes of points to locate
-    @param timesteps            A list of timesteps at which the measurements have been taken of the points needed to be located
-    @param parameters           A list of parameters, i.e. variables which should be measured of points to locate
-    @param tree                 A tree with the cells in them that you can query
-    @param decomp_domain        Array with information about which cells are in this PE's prognostic area
-    @param clon                 Array with the cell longitudes
-    @param number_of_cells      Number of over how many cells should be interpolated
-    @param accepted_distance    Float, distance in km from the nearest found cell that is accepted (i.e. if the point is nowhere near our grid, we reject)
-    @return  All of the relevant data of the points found in this PE's prognostic area: jb_loc, jc_loc, lon, lat, timesteps, parameters, weights
+    """!Find satellite observation points (generic/cif) within the local PE domain.
+
+    Uses nearest-cell search and inverse-distance weights; filters to owned cells and
+    within an accepted great-circle distance.
+
+    @param lons Longitudes of points to collocate.
+    @param lats Latitudes of points to collocate.
+    @param timesteps Observation datetimes per point.
+    @param parameters Parameter names per point.
+    @param tree KDTree on unit-sphere ICON cell centers.
+    @param decomp_domain Ownership map per cell (0 = owned by this PE).
+    @param clon Array whose shape defines (jc, jb) index layout.
+    @param number_of_cells Number of cells to include in interpolation.
+    @param accepted_distance Max accepted distance (km) to closest cell.
+    @return Tuple:
+        - jc_locs (int32)      : (N x number_of_cells)
+        - jb_locs (int32)      : (N x number_of_cells)
+        - lons_local (float64) : (N,)
+        - lats_local (float64) : (N,)
+        - timesteps_local      : (N,)
+        - parameters_local (U10): (N,)
+        - weights_all (float64): (N x number_of_cells)
     """
     # Define all lists as empty
     jc_locs = []
@@ -251,24 +381,25 @@ def find_stations_satellite_cif(lons, lats, timesteps, parameters, tree, decomp_
 
 
 def find_stations_satellite_CH4(lons, lats, timesteps, tree, decomp_domain, clon, pavg0_sat, pw_sat, ak_sat, qa0_sat, cams_tree, accepted_distance, longitude_corners, latitude_corners, tree_corners, icon_polygons):
-    """! Find the satellite CH4 observation points on each PE in the own domain and return all of the relevant data needed for computation. All lists need to have the same length
-    @param lons                 A list of longitudes of points to locate
-    @param lats                 A list of latitudes of points to locate
-    @param timesteps            A list of timesteps at which the measurements have been taken of the points needed to be located
-    @param tree                 A tree with the cells in them that you can query
-    @param decomp_domain        Array with information about which cells are in this PE's prognostic area
-    @param clon                 Array with the cell longitudes
-    @param pavg0_sat            A list of the pavg0 values of points to locate
-    @param pw_sat               A list of the pw values of points to locate
-    @param ak_sat               A list of the ak values of points to locate
-    @param qa0_sat              A list of the qa0 values of points to locate
-    @param cams_tree            A tree with the cells of the cams data in them that you can query
-    @param accepted_distance    Float, distance in km from the nearest found cell that is accepted (i.e. if the point is nowhere near our grid, we reject)
-    @param longitude_corners    A 2D array with the information of the corners of the satellite observation. This array is the longitude information
-    @param latitude_corners     A 2D array with the information of the corners of the satellite observation. This array is the latitude information
-    @param tree_corners         A tree, with the icon polygons in it
-    @param icon_polygons        The icon polygons
-    @return  All of the relevant data of the points found in this PE's prognostic area: jc_loc, jb_loc, lon, lat, timesteps, pavg0, pw, ak, qa0, cams_indices, fracs_cams, weights
+    """!Find CH4 satellite observation points and polygon overlaps in local PE domain.
+
+    Combines nearest-cell search with polygon overlap (satellite footprint vs ICON cells)
+    to compute horizontal weights. Also finds nearest CAMS index and time-fraction.
+
+    @param lons, lats Positions of satellite ground pixels.
+    @param timesteps Observation datetimes.
+    @param tree KDTree on unit-sphere ICON cell centers.
+    @param decomp_domain Ownership map per cell (0 = owned by this PE).
+    @param clon Array whose shape defines (jc, jb) layout.
+    @param pavg0_sat, pw_sat, ak_sat, qa0_sat Retrieval vectors/matrices per obs.
+    @param cams_tree KDTree constructed on CAMS grid.
+    @param accepted_distance Max accepted distance (km) to closest ICON cell.
+    @param longitude_corners 2D array of pixel footprint longitudes (corners x obs).
+    @param latitude_corners  2D array of pixel footprint latitudes (corners x obs).
+    @param tree_corners STRtree of ICON polygons.
+    @param icon_polygons List/array of ICON cell polygons.
+    @return Tuple with jc/jb indices, positions/times, retrieval inputs, CAMS indices,
+            CAMS fractions, weights, and covered area per obs.
     """
     # Define all lists as empty
     jc_locs = []
@@ -381,9 +512,13 @@ def find_stations_satellite_CH4(lons, lats, timesteps, tree, decomp_domain, clon
             np.array(covered_areas))
 
 def write_header_sat(comm, file_name):
-    """! Writes the header for the output nc file of the satellite CH4 measurements
-    @param comm         MPI communicator containing all working PE's
-    @param file_name    The file name of the output file
+    """!Create NetCDF header for CH4 satellite output.
+
+    Defines unlimited dimension 'index' and variables: date, lon, lat, CH4, covered_area.
+
+    @param comm MPI communicator (root-only writes).
+    @param file_name Output file path to create.
+    @return None.
     """
     if comm.Get_rank() == 0:
         ncfile_sat = Dataset(file_name, 'w', format='NETCDF4')
@@ -398,10 +533,15 @@ def write_header_sat(comm, file_name):
         ncfile_sat.close()
     
 def write_header_sat_cif(comm, file_name, num_levels):
-    """! Writes the header for the output nc file of the satellite full column write out measurements
-    @param comm         MPI communicator containing all working PE's
-    @param file_name    The file name of the output file
-    @param num_levels   The number of levels that the model has
+    """!Create NetCDF header for satellite full-column (cif) output.
+
+    Defines dims 'index' (unlimited) and 'level', and variables:
+    date, lon, lat, parameter, measurement(index, level).
+
+    @param comm MPI communicator (root-only writes).
+    @param file_name Output file path to create.
+    @param num_levels Number of vertical levels.
+    @return None.
     """
     if comm.Get_rank() == 0:
         ncfile_sat = Dataset(file_name, 'w', format='NETCDF4')
@@ -417,10 +557,15 @@ def write_header_sat_cif(comm, file_name, num_levels):
         ncfile_sat.close()
 
 def write_satellite_cif(comm, done_data: SatelliteDataDoneGeneral, file_name_output):
-    """!Function to write satellite column data to output nc file using preallocated arrays with a counter.
-    @param comm                 MPI communicator containing all working PE's
-    @param done_data            Dictionary with the data that is done
-    @param file_name_output     Filename of the output nc file. Expects the header of the nc file to be written already
+    """!Append completed satellite column data (generic/cif) to NetCDF.
+
+    Gathers from ranks, sorts by date, converts times to milliseconds since
+    2019-01-01 00:00:00, and appends.
+
+    @param comm MPI communicator.
+    @param done_data Completed data container (SatelliteDataDoneGeneral).
+    @param file_name_output Existing NetCDF file path (with header).
+    @return None.
     """
     done_data_local = None
     done_counter = done_data.counter
@@ -477,10 +622,15 @@ def write_satellite_cif(comm, done_data: SatelliteDataDoneGeneral, file_name_out
     done_data.counter = 0 # Reset the done counter
 
 def write_satellite_CH4(comm, done_data: SatelliteDataDoneCH4, file_name_output):
-    """!Function to write satellite CH4 data to output nc file using preallocated arrays with a counter.
-    @param comm                 MPI communicator containing all working PE's
-    @param data_done            Dictionary with the data that is done
-    @param file_name_output     Filename of the output nc file. Expects the header of the nc file to be written already
+    """!Append completed CH4 satellite comparisons to NetCDF.
+
+    Gathers from ranks, sorts by date, converts times to milliseconds since
+    default reference, and appends lon/lat/date/CH4/covered_area.
+
+    @param comm MPI communicator.
+    @param done_data Completed data container (SatelliteDataDoneCH4).
+    @param file_name_output Existing NetCDF file path (with header).
+    @return None.
     """
     done_data_local = None
     done_counter = done_data.counter
@@ -534,19 +684,24 @@ def write_satellite_CH4(comm, done_data: SatelliteDataDoneCH4, file_name_output)
     done_data.counter = 0 # Reset the done counter
 
 def read_in_satellite_data_CH4(comm, tree, decomp_domain, clon, start_model, end_model, tropomi_filename, cams_base_path, cams_params_file, accepted_distance, icon_polygons):
-    """! Read in the satellite measurement points on each PE in the own domain and return all of the relevant data needed for computation as dictionaries
-    @param comm                 MPI communicator containing all working PE's
-    @param tree                 A tree with the cells in them that you can query
-    @param decomp_domain        Array with information about which cells are in this PE's prognostic area
-    @param clon                 Array with the cell longitudes
-    @param accepted_distance    Float, value which distance should be accepted (in km). Just there to reject points that are very far away and lead to weird results
-    @param icon_polygons        The icon polygons as a list, same order as in clon etc.
-    @param tropomi_filename     Path to the tropomi nc file
-    @param cams_base_path       Base path of the CAMS data
-    @param cams_params_file     path to the CAMS parameter file
-    @param start_model          datetime object depicting the start datetime of the experiment
-    @param end_model            datetime object depicting the end datetime of the experiment
-    @return  Tuple of dicts that symbolize the data to do, the data done and the cams files dict
+    """!Read CH4 satellite inputs, CAMS metadata, and build to-do/done containers.
+
+    Filters TROPOMI observations to the model window, prepares CAMS files and
+    hybrid coefficients, builds KD trees and STRtree, finds local stations, and
+    allocates ``SatelliteDataToDoCH4`` / ``SatelliteDataDoneCH4``.
+
+    @param comm MPI communicator.
+    @param tree KDTree on ICON grid (unit-sphere).
+    @param decomp_domain Ownership map per cell (0 = owned).
+    @param clon Array whose shape defines (jc, jb) layout.
+    @param start_model Experiment start datetime.
+    @param end_model Experiment end datetime.
+    @param tropomi_filename Path to TROPOMI NetCDF.
+    @param cams_base_path Base directory of CAMS files.
+    @param cams_params_file Path to CAMS parameter NetCDF (hybrid coeffs).
+    @param accepted_distance Max accepted distance (km) to closest ICON cell.
+    @param icon_polygons List/array of ICON polygons.
+    @return Tuple ``(local_data_to_do, local_data_done, cams_files_dict)``.
     """
     cams_files_dict = {} # Dictionary for the cams file names
 
@@ -663,34 +818,30 @@ def read_in_satellite_data_CH4(comm, tree, decomp_domain, clon, start_model, end
     done_covered_areas = np.empty(N_satellite_points, dtype=np.float64)
     done_counter_sat = 0
 
-    # # Load all data into Dicts
-    # keys_to_do = ['lon', 'lat', 'timestep', 'jc_loc', 'jb_loc', 'pavg0', 'pw', 'ak', 'qa0', 'cams_index', 'frac_cams', 'hyam', 'hybm', 'hyai', 'hybi', 'weights']
-    # values_to_do = [satellite_lons, satellite_lats, satellite_timestep, jc_loc_satellite, jb_loc_satellite, pavg0_sat, pw_sat, ak_sat, qa0_sat, cams_indices_sat, fracs_cams, hyam, hybm, hyai, hybi, weights_sat]
-    # local_data_to_do = {keys_to_do[i]:values_to_do[i] for i in range(len(keys_to_do))}
     local_data_to_do = SatelliteDataToDoCH4(satellite_lons, satellite_lats, satellite_timestep, jc_loc_satellite, jb_loc_satellite, weights_sat, qa0_sat, ak_sat, pw_sat, pavg0_sat, cams_indices_sat, fracs_cams, hyam, hybm, hyai, hybi, covered_areas)
-
-    # keys_done = ['lon', 'lat', 'timestep', 'CH4', 'counter']
-    # values_done = [done_lons_sat, done_lats_sat, done_times_sat, done_CH4_sat, done_counter_sat]
-    # local_data_done = {keys_done[i]:values_done[i] for i in range(len(keys_done))}
     local_data_done = SatelliteDataDoneCH4(done_lons_sat, done_lats_sat, done_times_sat, done_CH4_sat, done_counter_sat, done_covered_areas)
     
-    return local_data_to_do, local_data_done, cams_files_dict # Return all of the Data in Dicts
+    return local_data_to_do, local_data_done, cams_files_dict # Return all of the Data
 
 def read_in_satellite_data_cif(comm, tree, decomp_domain, clon, start_model, end_model, path_to_csv, number_of_cells, accepted_distance, N_levels):
-    """! Read in the satellite measurement points on each PE in the own domain and return all of the relevant data needed for computation as dictionaries
-    @param comm                 MPI communicator containing all working PE's
-    @param tree                 A tree with the cells in them that you can query
-    @param decomp_domain        Array with information about which cells are in this PE's prognostic area
-    @param clon                 Array with the cell longitudes
-    @param path_to_csv          Path to the input csv file for the satellite data
-    @param start_model          datetime object depicting the start datetime of the experiment
-    @param end_model            datetime object depicting the end datetime of the experiment
-    @param number_of_cells      number of cells over which should be interpolated
-    @param accepted_distance    Float, value which distance should be accepted (in km). Just there to reject points that are very far away and lead to weird results
-    @param N_levels             number of levels that are in the model
-    @return  Tuple of dicts that symbolize the data to do and the data done
-    """
+    """!Read generic satellite inputs (from CSV) and build to-do/done containers.
 
+    De-duplicates, filters to model window, finds local stations via
+    ``find_stations_satellite_cif``, allocates
+    ``SatelliteDataToDoGeneral`` / ``SatelliteDataDoneGeneral``.
+
+    @param comm MPI communicator.
+    @param tree KDTree on ICON grid (unit-sphere).
+    @param decomp_domain Ownership map per cell (0 = owned).
+    @param clon Array whose shape defines (jc, jb) layout.
+    @param start_model Experiment start datetime.
+    @param end_model Experiment end datetime.
+    @param path_to_csv Input CSV path.
+    @param number_of_cells Number of cells to include in interpolation.
+    @param accepted_distance Max accepted distance (km) to closest ICON cell.
+    @param N_levels Number of vertical levels (for output allocation).
+    @return Tuple ``(local_data_to_do, local_data_done)``.
+    """
     if comm.Get_rank() == 0:
         df = pd.read_csv(path_to_csv, sep=',')
         df = df.dropna(subset=['lon', 'lat', 'tstep', 'parameter'])
@@ -721,7 +872,6 @@ def read_in_satellite_data_cif(comm, tree, decomp_domain, clon, start_model, end
     lats = comm.bcast(lats, root = 0)
     timesteps = comm.bcast(timesteps, root = 0)
     parameters = comm.bcast(parameters, root = 0)
-    # print(f"lons: {lons.shape}, lats: {lats.shape}, timesteps: {timesteps.shape}, params: {parameters.shape}", file=sys.stderr)
 
     (jc_loc_satellite, jb_loc_satellite, satellite_lons, satellite_lats, satellite_timestep, satellite_parameters, weights_all) = find_stations_satellite_cif(lons, lats, timesteps, parameters, tree, decomp_domain, clon, number_of_cells, accepted_distance)
    
@@ -734,26 +884,22 @@ def read_in_satellite_data_cif(comm, tree, decomp_domain, clon, start_model, end
     done_parameters_sat = np.empty(N_satellite_points, dtype='U10')
     done_counter_sat = 0
 
-    # Load all data into Dicts
-    # keys_to_do = ['lon', 'lat', 'timestep', 'jc_loc', 'jb_loc', 'parameter', 'weights']
-    # values_to_do = [satellite_lons, satellite_lats, satellite_timestep, jc_loc_satellite, jb_loc_satellite, satellite_parameters, weights_all]
-    # local_data_to_do = {keys_to_do[i]:values_to_do[i] for i in range(len(keys_to_do))}
     local_data_to_do = SatelliteDataToDoGeneral(satellite_lons, satellite_lats, satellite_timestep, jc_loc_satellite, jb_loc_satellite, satellite_parameters, weights_all)
-
-    # keys_done = ['lon', 'lat', 'timestep', 'measurement', 'counter', 'parameter']
-    # values_done = [done_lons_sat, done_lats_sat, done_times_sat, done_measurements_sat, done_counter_sat, done_parameters_sat]
-    # local_data_done = {keys_done[i]:values_done[i] for i in range(len(keys_done))}
     local_data_done = SatelliteDataDoneGeneral(done_lons_sat, done_lats_sat, done_times_sat, done_parameters_sat, done_measurements_sat, done_counter_sat)
     
-    return local_data_to_do, local_data_done # Return all of the Data in Dicts
+    return local_data_to_do, local_data_done # Return all of the Data
 
 def update_cams(datetime, cams_files_dict, cams_prev_data=None, cams_next_data=None):
-    """! Short function to update the current cams data, needs to be updated every 6 hours at 0, 6, 12 and 18
-    @param datetime         Current datetime
-    @param cams_file_dict   The dictionary with the CAMS file names
-    @param cams_prev_data   prev data from before, will be closed
-    @param cams_next_data   next data from before, will be closed
-    @return Tuple of the updated CAMS data; Shape: prev_data, next_data
+    """!Update/open CAMS datasets for the current time window (6-hour cadence).
+
+    Closes previously opened datasets (if any) and opens the pair bracketing
+    ``datetime`` (prev and next).
+
+    @param datetime Current datetime.
+    @param cams_files_dict Mapping from datetime -> CAMS filename.
+    @param cams_prev_data Previously opened xarray Dataset (or None).
+    @param cams_next_data Previously opened xarray Dataset (or None).
+    @return Tuple ``(cams_prev_data, cams_next_data)`` as xarray Datasets.
     """
     cams_prev_time = pd.to_datetime(datetime)
     cams_next_time = cams_prev_time + datetimelib.timedelta(hours=6)
@@ -766,14 +912,19 @@ def update_cams(datetime, cams_files_dict, cams_prev_data=None, cams_next_data=N
     return cams_prev_data, cams_next_data
 
 def tracking_satellite_cif_same_index(datetime, data_to_do: SatelliteDataToDoGeneral, data_done: SatelliteDataDoneGeneral, data_np, dict_vars, operations_dict, num_levels):
-    """! Track the data of the satellite measurements for cif. It interpolates horizontally using inverse distancing and vertically just taking the same vertical index as the neighboring columns. moves data that is done being measured to the data_done dictionary
-    @param datetime             Current datetime (np.datetime object)
-    @param data_to_do           The dictionary with the data that needs to be done
-    @param data_done            The dictionary with the data that is done
-    @param data_np              List of numpy arrays with the icon variable data
-    @param dict_vars            Dictionary with the variable data info
-    @param operations_dict      Dictionary with the operators
-    @param num_levels           The number of vertical levels in this simulation
+    """!Compute satellite columns (cif) using same-index vertical sampling.
+
+    Horizontally interpolates via inverse-distance weights; vertically samples
+    each neighbor at the same index as the closest column, then averages.
+
+    @param datetime Current datetime.
+    @param data_to_do Pending container (SatelliteDataToDoGeneral).
+    @param data_done Completed container (SatelliteDataDoneGeneral).
+    @param data_np Mapping ``{var: list[np.ndarray]}`` of model fields.
+    @param dict_vars Variable recipe dict with ``factor`` and ``signs``.
+    @param operations_dict Mapping sign string -> binary operator.
+    @param num_levels Number of vertical levels to output.
+    @return None.
     """
     if data_to_do.timestep.size > 0: # Checks if there is still work to do
 
@@ -819,26 +970,24 @@ def tracking_satellite_cif_same_index(datetime, data_to_do: SatelliteDataToDoGen
             # Only keep the satellite points that aren't done yet
             keep_mask = ~ready_mask
 
-            # keys_to_filter = [
-            #     'lon', 'lat', 'timestep',
-            #     'jc_loc', 'jb_loc', 'parameter', 'weights'
-            # ]
-
-            # for key in keys_to_filter:
-            #     data_to_do[key] = data_to_do[key][keep_mask]
             data_to_do.apply_mask(keep_mask)
         
 
 def tracking_satellite_cif_pressures(datetime, data_to_do: SatelliteDataToDoGeneral, data_done: SatelliteDataDoneGeneral, data_np, dict_vars, operations_dict, pres_np, num_levels):
-    """! Track the data of the satellite measurements for cif. It interpolates horizontally using inverse distancing and vertically by retrieving the pressure of the closest column and then linearly interpolating to this pressure. moves data that is done being measured to the data_done dictionary
-    @param datetime             Current datetime (np.datetime object)
-    @param data_to_do           The dictionary with the data that needs to be done
-    @param data_done            The dictionary with the data that is done
-    @param data_np              List of numpy arrays with the icon variable data
-    @param dict_vars            Dictionary with the variable data info
-    @param operations_dict      Dictionary with the operators
-    @param num_levels           The number of vertical levels in this simulation
-    @param pres_np              Numpy array with the current pressures
+    """!Compute satellite columns (cif) using pressure-based vertical interpolation.
+
+    For each neighbor column, find closest pressure to the target profile,
+    perform linear interpolation in pressure space, then horizontally average.
+
+    @param datetime Current datetime.
+    @param data_to_do Pending container (SatelliteDataToDoGeneral).
+    @param data_done Completed container (SatelliteDataDoneGeneral).
+    @param data_np Mapping ``{var: list[np.ndarray]}`` of model fields.
+    @param dict_vars Variable recipe dict with ``factor`` and ``signs``.
+    @param operations_dict Mapping sign string -> binary operator.
+    @param pres_np 3D array of model pressures (Pa) at mid-levels.
+    @param num_levels Number of vertical levels to output.
+    @return None.
     """
     if data_to_do.timestep.size > 0: # Checks if there is still work to do
 
@@ -907,16 +1056,25 @@ def tracking_satellite_cif_pressures(datetime, data_to_do: SatelliteDataToDoGene
 
 
 def tracking_CH4_satellite(datetime, CH4_EMIS_np, CH4_BG_np, pres_ifc_np, pres_np, data_to_do: SatelliteDataToDoCH4, data_done: SatelliteDataDoneCH4, cams_prev_data, cams_next_data):
-    """! Track the CH4 of the satellite measurements. Interpolate horizontally via the are covered by the observation, vertically via pressures and then linear interpolation. Then computes everything for the satellite observation value, to compare. Move data that is done being measured to the data_done dictionary
-    @param datetime             Current datetime (np.datetime object)
-    @param data_to_do           The dictionary with the data that needs to be done
-    @param data_done            The dictionary with the data that is done
-    @param CH4_EMIS_np          Numpy array with the current CH4 EMIS
-    @param CH4_BG_np            Numpy array with the current CH4 BG
-    @param pres_ifc_np          Numpy array with the current pressures on the interfaces (so the half levels)
-    @param pres_np              Numpy array with the current pressures
-    @param cams_prev_data       Xarray dataset, with the current CAMS previous data
-    @param cams_next_data       Xarray dataset, with the current CAMS next data
+    """!Compute CH4 total column for satellite comparison.
+
+    Steps:
+      1) Build ICON CH4 profile = BG + scaled EMIS contribution (per level).
+      2) Pressure-based vertical interpolation to target column profile.
+      3) Horizontal averaging via satellite footprint coverage weights.
+      4) Interpolate CAMS in time and extend low-pressure part of the profile.
+      5) Apply retrieval operators (pw, ak, qa0, pavg0) to get total column.
+
+    @param datetime Current datetime.
+    @param CH4_EMIS_np ICON CH4 emission field (per level).
+    @param CH4_BG_np ICON CH4 background field (per level).
+    @param pres_ifc_np Pressures at interfaces (Pa).
+    @param pres_np Pressures at mid-levels (Pa).
+    @param data_to_do Pending container (SatelliteDataToDoCH4).
+    @param data_done Completed container (SatelliteDataDoneCH4).
+    @param cams_prev_data xarray Dataset at previous CAMS step.
+    @param cams_next_data xarray Dataset at next CAMS step.
+    @return None.
     """
     if data_to_do.timestep.size > 0: # Checks if there is still work to do
 

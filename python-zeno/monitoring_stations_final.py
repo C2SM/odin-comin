@@ -1,25 +1,25 @@
-##
-# @file monitoring_stations_final.py
-#
-# @brief Tracking any variables averaging over starting and ending times
-#
-# @section description_monitoring_stations_final Description
-# Tracking any variables averaging over starting and ending times.
-#
-# @section libraries_monitoring_stations_final Libraries/Modules
-# - numpy library
-# - xarray library
-# - netCDF4 library
-#   - Access to Dataset
-# - pandas library
-#   - Access to pandas.to_datetime
-# - sys library
-#
-# @section author_monitoring_stations_final Author(s)
-# - Created by Zeno Hug on 05/23/2025.
-#
-# Copyright (c) 2025 Empa.  All rights reserved.
+"""! @file monitoring_stations_final.py
 
+@brief Tracking variables averaged over start and end times.
+
+@section description_monitoring_stations_final Description
+Tracking any variables averaged over starting and ending times.
+
+@section libraries_monitoring_stations_final Libraries/Modules
+- numpy
+- xarray
+- netCDF4
+  - Access to Dataset
+- pandas
+  - Access to pandas.to_datetime
+  - Access to pandas.read_csv
+- sys
+
+@section author_monitoring_stations_final Author(s)
+- Created by Zeno Hug on 08/11/2025.
+
+Copyright (c) 2025 Empa. All rights reserved.
+"""
 
 # Imports
 import numpy as np
@@ -29,7 +29,51 @@ import pandas as pd
 import sys
 
 class StationDataToDoCIF:
+    """!Holds station data for ComIn interface and provides masking capabilities.
+
+    Stores spatial, temporal, and observational data for stations that still
+    need processing, including interpolation metadata.
+
+    Attributes:
+        lon (float or np.ndarray): Longitude(s) of the station(s).
+        lat (float or np.ndarray): Latitude(s) of the station(s).
+        elevation (float or np.ndarray): Elevation above sea level (m).
+        sampling_height (float or np.ndarray): Height above surface where samples are taken (m).
+        sampling_strategy (int or np.ndarray): Strategy flag (1=lowland, 2=mountain, 3=instantaneous lowland, 4=instantaneous mountain).
+        jc_loc (np.ndarray): JC grid indices.
+        jb_loc (np.ndarray): JB grid indices.
+        vertical_index1 (np.ndarray): First vertical interpolation index.
+        vertical_index2 (np.ndarray): Second vertical interpolation index.
+        vertical_weight (np.ndarray): Weights for vertical interpolation.
+        horizontal_weight (np.ndarray): Weights for horizontal interpolation.
+        number_of_steps (np.ndarray): Number of accumulation/averaging steps.
+        id (str or np.ndarray): Station identifier(s).
+        stime (np.datetime64 or np.ndarray): Start time(s).
+        etime (np.datetime64 or np.ndarray): End time(s).
+        parameter (str or np.ndarray): Parameter name(s) being measured.
+        obs (np.ndarray): Accumulated observation values.
+    """
     def __init__(self, lon, lat, elevation, sampling_height, sampling_strategy, jc_loc, jb_loc, vertical_index1, vertical_index2, vertical_weight, horizontal_weight, number_of_steps, id, stime, etime, parameter, obs):
+        """!Initialize a StationDataToDoCIF instance.
+
+        @param lon Longitude(s) of the station(s).
+        @param lat Latitude(s) of the station(s).
+        @param elevation Elevation above sea level (m).
+        @param sampling_height Height above surface where samples are taken (m).
+        @param sampling_strategy Strategy flag (1=lowland, 2=mountain, 3=instantaneous lowland, 4=instantaneous mountain).
+        @param jc_loc JC grid indices.
+        @param jb_loc JB grid indices.
+        @param vertical_index1 First vertical interpolation index.
+        @param vertical_index2 Second vertical interpolation index.
+        @param vertical_weight Weights for vertical interpolation.
+        @param horizontal_weight Weights for horizontal interpolation.
+        @param number_of_steps Number of accumulation/averaging steps.
+        @param id Station identifier(s).
+        @param stime Start time(s).
+        @param etime End time(s).
+        @param parameter Parameter name(s) being measured.
+        @param obs Accumulated observation values.
+        """
         self.lon = lon
         self.lat = lat
         self.elevation = elevation
@@ -48,18 +92,64 @@ class StationDataToDoCIF:
         self.parameter = parameter
         self.obs = obs
 
-    # def filter_ready(self, current_time):
-    #     mask = self.timestep <= np.datetime64(current_time)
-    #     return mask
-
     def apply_mask(self, mask):
+        """!Apply a boolean mask to all array attributes with matching length.
+
+        Filters all attributes that are NumPy arrays whose first dimension
+        equals ``mask.shape[0]``.
+
+        @param mask Boolean NumPy array indicating which elements to keep.
+        """
         for key in vars(self):
             value = getattr(self, key)
             if isinstance(value, np.ndarray) and value.shape[0] == mask.shape[0]:
                 setattr(self, key, value[mask])
 
 class StationDataToDo:
+    """!Container for pending station computations across multiple variables.
+
+    Stores station metadata plus per-variable accumulation arrays in
+    ``dict_measurement`` for points that are not yet finished.
+
+    Attributes:
+        lon (np.ndarray): Longitudes of stations.
+        lat (np.ndarray): Latitudes of stations.
+        elevation (np.ndarray): Elevations above sea level (m).
+        sampling_height (np.ndarray): Heights above surface for sampling (m).
+        sampling_strategy (np.ndarray): Strategy flags (1,2,3,4).
+        jc_loc (np.ndarray): JC grid indices (nearest neighbors).
+        jb_loc (np.ndarray): JB grid indices (nearest neighbors).
+        vertical_index1 (np.ndarray): First vertical interpolation indices.
+        vertical_index2 (np.ndarray): Second vertical interpolation indices.
+        vertical_weight (np.ndarray): Vertical interpolation weights.
+        horizontal_weight (np.ndarray): Horizontal interpolation weights.
+        number_of_steps (np.ndarray): Accumulated step counts per station.
+        id (np.ndarray): Station identifiers.
+        stime (np.ndarray): Start times.
+        etime (np.ndarray): End times.
+        dict_measurement (dict[str, np.ndarray]): Per-variable accumulation arrays.
+    """
     def __init__(self, lon, lat, elevation, sampling_height, sampling_strategy, jc_loc, jb_loc, vertical_index1, vertical_index2, vertical_weight, horizontal_weight, number_of_steps, id, stime, etime, dict_vars):
+        """!Initialize a StationDataToDo instance and allocate measurement arrays.
+
+        @param lon Longitudes of stations.
+        @param lat Latitudes of stations.
+        @param elevation Elevations above sea level (m).
+        @param sampling_height Heights above surface for sampling (m).
+        @param sampling_strategy Strategy flags (1,2,3,4).
+        @param jc_loc JC grid indices (nearest neighbors).
+        @param jb_loc JB grid indices (nearest neighbors).
+        @param vertical_index1 First vertical interpolation indices.
+        @param vertical_index2 Second vertical interpolation indices.
+        @param vertical_weight Vertical interpolation weights.
+        @param horizontal_weight Horizontal interpolation weights.
+        @param number_of_steps Accumulated step counts per station.
+        @param id Station identifiers.
+        @param stime Start times.
+        @param etime End times.
+        @param dict_vars Dictionary describing variables to compute; keys are variable
+                         names used to allocate arrays in ``dict_measurement``.
+        """
         self.lon = lon
         self.lat = lat
         self.elevation = elevation
@@ -80,6 +170,14 @@ class StationDataToDo:
             self.dict_measurement[variable] = np.zeros(lon.shape, dtype=np.float64)
 
     def apply_mask(self, mask):
+        """!Apply a boolean mask to all array attributes and per-variable arrays.
+
+        Filters attributes that are NumPy arrays with the same first-dimension
+        length as ``mask``, and applies the same mask to each array stored in
+        ``dict_measurement``.
+
+        @param mask Boolean NumPy array indicating which elements to keep.
+        """
         for key in vars(self):
             value = getattr(self, key)
             if isinstance(value, np.ndarray) and value.shape[0] == mask.shape[0]:
@@ -90,7 +188,36 @@ class StationDataToDo:
                 self.dict_measurement[variable] = array[mask]
     
 class StationDataDoneCIF:
+    """!Container for completed CIF station observations (ready to write out).
+
+    Attributes:
+        lon (np.ndarray): Longitudes of completed stations.
+        lat (np.ndarray): Latitudes of completed stations.
+        elevation (np.ndarray): Elevations above sea level (m).
+        sampling_height (np.ndarray): Sampling heights above surface (m).
+        sampling_strategy (np.ndarray): Strategy flags (1,2,3,4).
+        stime (np.ndarray): Start times.
+        etime (np.ndarray): End times.
+        counter (int): Number of ready entries currently filled.
+        id (np.ndarray): Station identifiers.
+        parameter (np.ndarray): Parameter names.
+        obs (np.ndarray): Final observation values.
+    """
     def __init__(self, lon, lat, elevation, sampling_height, sampling_strategy, stime, etime, counter, id, parameter, obs):
+        """!Initialize a StationDataDoneCIF instance.
+
+        @param lon Longitudes.
+        @param lat Latitudes.
+        @param elevation Elevations above sea level (m).
+        @param sampling_height Sampling heights above surface (m).
+        @param sampling_strategy Strategy flags (1,2,3,4).
+        @param stime Start times.
+        @param etime End times.
+        @param counter Number of filled entries so far.
+        @param id Station identifiers.
+        @param parameter Parameter names.
+        @param obs Final observation values.
+        """
         self.lon = lon
         self.lat = lat
         self.elevation = elevation
@@ -104,13 +231,45 @@ class StationDataDoneCIF:
         self.obs = obs
 
     def apply_mask(self, mask):
+        """!Apply a boolean mask to all array attributes with matching length.
+
+        @param mask Boolean NumPy array indicating which elements to keep.
+        """
         for key in vars(self):
             value = getattr(self, key)
             if isinstance(value, np.ndarray) and value.shape[0] == mask.shape[0]:
                 setattr(self, key, value[mask])
 
 class StationDataDone:
+    """!Container for completed multi-variable station results (ready to write out).
+
+    Attributes:
+        lon (np.ndarray): Longitudes of completed stations.
+        lat (np.ndarray): Latitudes of completed stations.
+        elevation (np.ndarray): Elevations above sea level (m).
+        sampling_height (np.ndarray): Sampling heights above surface (m).
+        sampling_strategy (np.ndarray): Strategy flags (1,2,3,4).
+        stime (np.ndarray): Start times.
+        etime (np.ndarray): End times.
+        counter (int): Number of ready entries currently filled.
+        id (np.ndarray): Station identifiers.
+        dict_measurement (dict[str, np.ndarray]): Final per-variable values.
+    """
     def __init__(self, lon, lat, elevation, sampling_height, sampling_strategy, stime, etime, counter, id, dict_vars):
+        """!Initialize a StationDataDone instance and allocate output arrays.
+
+        @param lon Longitudes.
+        @param lat Latitudes.
+        @param elevation Elevations above sea level (m).
+        @param sampling_height Sampling heights above surface (m).
+        @param sampling_strategy Strategy flags (1,2,3,4).
+        @param stime Start times.
+        @param etime End times.
+        @param counter Number of filled entries so far.
+        @param id Station identifiers.
+        @param dict_vars Dictionary describing variables to store; keys are variable
+                         names used to allocate arrays in ``dict_measurement``.
+        """
         self.lon = lon
         self.lat = lat
         self.elevation = elevation
@@ -125,6 +284,10 @@ class StationDataDone:
             self.dict_measurement[variable] = np.zeros(lon.shape, dtype=np.float64)
 
     def apply_mask(self, mask):
+        """!Apply a boolean mask to all array attributes with matching length.
+
+        @param mask Boolean NumPy array indicating which elements to keep.
+        """
         for key in vars(self):
             value = getattr(self, key)
             if isinstance(value, np.ndarray) and value.shape[0] == mask.shape[0]:
@@ -133,42 +296,63 @@ class StationDataDone:
 
 # Functions
 def datetime64_to_days_since_1970(arr):
-    """! Converts datetime 64 to days since 1970
-    @param arr  An array or single value of type datetime 64  to convert
-    @return  The converted array/single value 
+    """!Convert numpy datetime64 values to "days since 1970-01-01 00:00:00".
+
+    @param arr Array-like or scalar of type ``np.datetime64`` to convert.
+    @return Array-like or scalar of floats: days since the Unix epoch (UTC).
     """
     epoch = np.datetime64("1970-01-01T00:00:00", 'ns')
     return (arr - epoch) / np.timedelta64(1, 'D')
 
 def lonlat2xyz(lon, lat):
-    """! Short helper function for calculating xyz coordinates from longitues and latitudes
-    @param lon   An array or single value of longitudes to convert to xyz coordinates
-    @param lat   An array or single value of latitudes to convert to xyz coordinates
-    @return  converted xyz values as a tuple
+    """!Convert spherical lon/lat (radians) to unit-sphere Cartesian coordinates.
+
+    Expects angles in **radians**.
+
+    @param lon Longitude(s) in radians.
+    @param lat Latitude(s) in radians.
+    @return Tuple ``(x, y, z)`` of arrays/scalars with Cartesian coordinates.
     """
     clat = np.cos(lat) 
     return clat * np.cos(lon), clat * np.sin(lon), np.sin(lat)
 
 def find_points_cif(lons, lats, sampling_heights, sampling_elevations, sampling_strategies, tree, decomp_domain, clon, hhl, number_of_NN, ids, timesteps_begin, timesteps_end, accepted_distance, parameters):
-    """! Find the local stationary monitoring stations on each PE in the own domain and return all of the relevant data needed for computation. All lists need to have the same length
-    @param lons                 A list of longitudes of points to locate
-    @param lats                 A list of latitudes of points to locate
-    @param sampling_heights     A list of sampling heights, meaning height above ground in meters
-    @param sampling_elevations  A list of sampling elevations, meaning the height of the ground, in meters above sea level
-    @param sampling_strategies  A list of sampling strategy flags, 1 = lowland, 2 = mountain, 3 = instantaneous measurement in lowland, 4 = averaged measurement in mountain
-    @param tree                 A tree with the cells in them that you can query
-    @param decomp_domain        Array with information about which cells are in this PE's prognostic area
-    @param clon                 Array with the cell longitudes
-    @param hhl                  Array with the height of the half levels
-    @param number_of_NN         Number of nearest cells over which should be interpolated
-    @param ids                  A list of ids (strings) of the points to locate
-    @param timesteps_begin      A list of timepoints at which the measuring should start of the points to locate
-    @param timesteps_end        A list of timepoints at which the measuring should end of the points to locate
-    @param accepted_distance    Float, distance in km from the nearest found cell that is accepted (i.e. if the point is nowhere near our grid, we reject)
-    @param parameters           A list of parameters/variables which should be measured at the points to locate
-    @return  All of the relevant data of the points found in this PE's prognostic area: jb_loc, jc_loc, vertical index 1 for vertical interpolation, vertical index 2 for vertical interpolation, weight for vertical interpolation, weights for horizontal interpolation, and all of the input lists with only the data stored of this PE's points
-    """
+    """!Locate CIF monitoring stations in the local PE domain and assemble interpolation metadata.
 
+    All input lists/arrays must have the same length.
+
+    @param lons Longitudes of target points (deg).
+    @param lats Latitudes of target points (deg).
+    @param sampling_heights Sampling heights above ground (m).
+    @param sampling_elevations Ground elevations (m ASL).
+    @param sampling_strategies Strategy flags: 1=lowland, 2=mountain, 3=instantaneous lowland, 4=instantaneous mountain.
+    @param tree Nearest-neighbor search tree built on unit-sphere coordinates.
+    @param decomp_domain Decomposition map indicating prognostic ownership per cell (0 = owned).
+    @param clon Grid longitudes array (radians or degrees as used consistently downstream).
+    @param hhl Half-level heights array (vertical column per (jc, jb)).
+    @param number_of_NN Number of nearest cells to use for interpolation.
+    @param ids Station identifiers (strings).
+    @param timesteps_begin Start times per station.
+    @param timesteps_end End times per station.
+    @param accepted_distance Maximum accepted great-circle distance (km) to the closest cell.
+    @param parameters Parameter names per station.
+    @return Tuple of numpy arrays:
+        - jc_locs (int32)         : JC indices (N x number_of_NN)
+        - jb_locs (int32)         : JB indices (N x number_of_NN)
+        - vertical_indices1 (int32): First vertical index (N x number_of_NN)
+        - vertical_indices2 (int32): Second vertical index (N x number_of_NN)
+        - weights_vertical_all (float64): Vertical weights (N x number_of_NN)
+        - weights_all (float64)   : Horizontal weights (N x number_of_NN; rows sum to 1)
+        - lons_local (float64)    : Accepted longitudes (N,)
+        - lats_local (float64)    : Accepted latitudes (N,)
+        - sampling_elevations_local (float64): Accepted elevations (N,)
+        - sampling_heights_local (float64)   : Accepted sampling heights (N,)
+        - sampling_strategy_local (int32)    : Accepted strategy flags (N,)
+        - ids_local (U20)         : Accepted station IDs (N,)
+        - timesteps_local_begin   : Accepted start times (N,)
+        - timesteps_local_end     : Accepted end times (N,)
+        - parameters_local (U20)  : Accepted parameters (N,)
+    """
     jc_locs = [] 
     jb_locs = []
     vertical_indices1 = []
@@ -305,22 +489,25 @@ def find_points_cif(lons, lats, sampling_heights, sampling_elevations, sampling_
 
 
 def find_points(lons, lats, sampling_heights, sampling_elevations, sampling_strategies, tree, decomp_domain, clon, hhl, number_of_NN, ids, timesteps_begin, timesteps_end, accepted_distance):
-    """! Find the local stationary monitoring stations on each PE in the own domain and return all of the relevant data needed for computation. All lists need to have the same length
-    @param lons                 A list of longitudes of points to locate
-    @param lats                 A list of latitudes of points to locate
-    @param sampling_heights     A list of sampling heights, meaning height above ground in meters
-    @param sampling_elevations  A list of sampling elevations, meaning the height of the ground, in meters above sea level
-    @param sampling_strategies  A list of sampling strategy flags, 1 = lowland, 2 = mountain, 3 = instantaneous measurement in lowland, 4 = averaged measurement in mountain
-    @param tree                 A tree with the cells in them that you can query
-    @param decomp_domain        Array with information about which cells are in this PE's prognostic area
-    @param clon                 Array with the cell longitudes
-    @param hhl                  Array with the height of the half levels
-    @param number_of_NN         Number of nearest cells over which should be interpolated
-    @param ids                  A list of ids (strings) of the points to locate
-    @param timesteps_begin      A list of timepoints at which the measuring should start of the points to locate
-    @param timesteps_end        A list of timepoints at which the measuring should end of the points to locate
-    @param accepted_distance    Float, distance in km from the nearest found cell that is accepted (i.e. if the point is nowhere near our grid, we reject)
-    @return  All of the relevant data of the points found in this PE's prognostic area: jb_loc, jc_loc, vertical index 1 for vertical interpolation, vertical index 2 for vertical interpolation, weight for vertical interpolation, weights for horizontal interpolation, and all of the input lists with only the data stored of this PE's points
+    """!Locate stationary monitoring stations in the local PE domain and assemble interpolation metadata.
+
+    All input lists/arrays must have the same length.
+
+    @param lons Longitudes of target points (deg).
+    @param lats Latitudes of target points (deg).
+    @param sampling_heights Sampling heights above ground (m).
+    @param sampling_elevations Ground elevations (m ASL).
+    @param sampling_strategies Strategy flags: 1=lowland, 2=mountain, 3=instantaneous lowland, 4=instantaneous mountain.
+    @param tree Nearest-neighbor search tree built on unit-sphere coordinates.
+    @param decomp_domain Decomposition map indicating prognostic ownership per cell (0 = owned).
+    @param clon Grid longitudes array.
+    @param hhl Half-level heights array.
+    @param number_of_NN Number of nearest cells to use for interpolation.
+    @param ids Station identifiers (strings).
+    @param timesteps_begin Start times per station.
+    @param timesteps_end End times per station.
+    @param accepted_distance Maximum accepted great-circle distance (km) to the closest cell.
+    @return Tuple of numpy arrays like ``find_points_cif`` but without ``parameters``.
     """
 
     jc_locs = [] 
@@ -456,10 +643,16 @@ def find_points(lons, lats, sampling_heights, sampling_elevations, sampling_stra
             np.array(timesteps_local_end))
 
 def write_points_cif(comm, data_done: StationDataDoneCIF, file_name_output):
-    """!Function to write surface monitoring data for cif to output nc file using preallocated arrays with a counter.
-    @param comm                 MPI communicator containing all working PE's
-    @param data_done            Dictionary with the data that is done
-    @param file_name_output     Filename of the output nc file. Expects the header of the nc file to be written already
+    """!Write completed CIF station observations to a NetCDF file (append mode).
+
+    Uses preallocated arrays and a counter to append new observations collected
+    across ranks. Root (rank 0) concatenates, sorts by ``etime``, converts times
+    to "days since 1970-01-01", and writes variables.
+
+    @param comm MPI communicator.
+    @param data_done Completed data container (``StationDataDoneCIF``).
+    @param file_name_output Path to an existing NetCDF file with header already written.
+    @return None.
     """
     done_counter = data_done.counter
     done_data_local = None
@@ -524,11 +717,17 @@ def write_points_cif(comm, data_done: StationDataDoneCIF, file_name_output):
     data_done.counter = 0
 
 def write_points(comm, data_done: StationDataDone, dict_vars, file_name_output):
-    """!Function to write stationary monitoring data to output nc file using preallocated arrays with a counter.
-    @param comm                 MPI communicator containing all working PE's
-    @param data_done            Dictionary with the data that is done
-    @param dict_vars            Dictionary with the variable info, user defined
-    @param file_name_output     Filename of the output nc file. Expects the header of the nc file to be written already
+    """!Write completed multi-variable station data to a NetCDF file (append mode).
+
+    Root (rank 0) gathers from all ranks, concatenates, sorts by ``etime``, converts
+    times to "days since 1970-01-01", then writes core metadata and each variable
+    in ``dict_vars``.
+
+    @param comm MPI communicator.
+    @param data_done Completed data container (``StationDataDone``).
+    @param dict_vars Dictionary describing variables (units, long_name, etc.).
+    @param file_name_output Path to an existing NetCDF file with header already written.
+    @return None.
     """
     done_counter = data_done.counter
     done_data_local = None
@@ -594,10 +793,14 @@ def write_points(comm, data_done: StationDataDone, dict_vars, file_name_output):
     data_done.counter = 0
 
 def write_header_points_cif(comm, file_name):
-    """!Function to write the header for the cif surface monitoring data output nc file
-    @param comm                 MPI communicator containing all working PE's
-    @param file_name            Filename of the output nc file
-    @param dict_vars            Dictionary with the variable info, user defined
+    """!Create the NetCDF header for CIF monitoring output.
+
+    Defines dimensions and variables, assigns CF-compliant metadata and
+    global attributes. Only executed on root (rank 0).
+
+    @param comm MPI communicator.
+    @param file_name Output NetCDF file path to create (will overwrite).
+    @return None.
     """
     if(comm.Get_rank() == 0):
         ncfile = Dataset(file_name, 'w', format='NETCDF4')
@@ -667,10 +870,15 @@ def write_header_points_cif(comm, file_name):
 
 
 def write_header_points(comm, file_name, dict_vars):
-    """!Function to write the header for the stationary monitoring data output nc file
-    @param comm                 MPI communicator containing all working PE's
-    @param file_name            Filename of the output nc file
-    @param dict_vars            Dictionary with the variable info, user defined
+    """!Create the NetCDF header for stationary monitoring output and add user variables.
+
+    Defines base dimensions/variables and CF metadata on root (rank 0),
+    then appends one variable per entry in ``dict_vars`` (with ``unit`` and ``long_name``).
+
+    @param comm MPI communicator.
+    @param file_name Output NetCDF file path to create (will overwrite/append).
+    @param dict_vars Mapping ``{var_name: {'unit': str, 'long_name': str}}``.
+    @return None.
     """
     if(comm.Get_rank() == 0):
         ncfile = Dataset(file_name, 'w', format='NETCDF4')
@@ -739,19 +947,24 @@ def write_header_points(comm, file_name, dict_vars):
 
 
 def read_in_points(comm, tree, decomp_domain, clon, hhl, number_of_NN, path_to_file, start_model, end_model, data_vars, accepted_distance):
-    """! Read in the local stationary monitoring stations on each PE in the own domain and return all of the relevant data needed for computation as dictionaries
-    @param comm                 MPI communicator containing all working PE's
-    @param tree                 A tree with the cells in them that you can query
-    @param decomp_domain        Array with information about which cells are in this PE's prognostic area
-    @param clon                 Array with the cell longitudes
-    @param hhl                  Array with the height of the half levels
-    @param number_of_NN         Number of nearest cells over which should be interpolated
-    @param path_to_file         The path of the input file
-    @param start_model          datetime object depicting the start datetime of the experiment
-    @param end_model            datetime object depicting the end datetime of the experiment
-    @param data_vars            The data dictionary with the data from the simulation
-    @param accepted_distance    Float, distance in km from the nearest found cell that is accepted (i.e. if the point is nowhere near our grid, we reject)
-    @return  Tuple of dicts that symbolize the data to do and the data done
+    """!Read stationary monitoring configuration from NetCDF and build to-do/done containers.
+
+    Filters stations to the model time window, broadcasts inputs to all ranks,
+    locates stations in the local domain via ``find_points``, and allocates
+    ``StationDataToDo`` / ``StationDataDone`` structures.
+
+    @param comm MPI communicator.
+    @param tree Nearest-neighbor search tree (unit-sphere).
+    @param decomp_domain Decomposition/ownership map per cell.
+    @param clon Grid longitudes array.
+    @param hhl Half-level heights array.
+    @param number_of_NN Number of nearest neighbors for interpolation.
+    @param path_to_file Path to input NetCDF with station definitions.
+    @param start_model Experiment start datetime.
+    @param end_model Experiment end datetime.
+    @param data_vars Dict describing variables to compute (used for allocation).
+    @param accepted_distance Maximum accepted distance (km) to closest cell.
+    @return Tuple ``(data_to_do, data_done)`` where each is a class instance.
     """
     if comm.Get_rank() == 0:
         input_ds = xr.open_dataset(path_to_file)
@@ -818,43 +1031,32 @@ def read_in_points(comm, tree, decomp_domain, clon, hhl, number_of_NN, path_to_f
 
     done_counter = 0 # counter of how many of the points are already done (since last writeout)
 
-    # Create Dicts with all of the data needed
     number_of_timesteps = np.zeros(N_points, dtype=np.int32)
-    # keys = ['lon', 'lat','elevation', 'sampling_height', 'sampling_strategy', 'jc_loc', 'jb_loc', 'vertical_index1', 'vertical_index2', 'vertical_weight', 'horizontal_weight', 'number_of_steps', 'id', 'stime', 'etime']
-    # values = [lons, lats, elevations, sampling_heights, sampling_strategies, jc_loc, jb_loc, vertical_indices_nearest, vertical_indices_second, vertical_weights, horizontal_weights, number_of_timesteps, ids, stimes, etimes]
-    # data = {keys[i]:values[i] for i in range(len(keys))}
-
     data_to_do = StationDataToDo(lons, lats, elevations, sampling_heights, sampling_strategies, jc_loc, jb_loc, vertical_indices_nearest, vertical_indices_second, vertical_weights, horizontal_weights, number_of_timesteps, ids, stimes, etimes, data_vars)
-
-
-    # keys_done = ['lon', 'lat', 'elevation', 'sampling_height', 'sampling_strategy', 'stime', 'etime', 'counter', 'id']
-    # values_done = [done_lons, done_lats, done_elevations, done_sampling_heights, done_sampling_strategies, done_stimes, done_etimes, done_counter, done_site_names]
-    # data_done = {keys_done[i]:values_done[i] for i in range(len(keys_done))}
-
     data_done = StationDataDone(done_lons, done_lats, done_elevations, done_sampling_heights, done_sampling_strategies, done_stimes, done_etimes, done_counter, done_site_names, data_vars)
-
-
-    # for variable in data_vars:
-    #     data[variable] = np.zeros(lons.shape, dtype=np.float64)
-    #     data_done[variable] = np.empty(N_points, dtype=np.float64)
 
     return data_to_do, data_done # Return the data
 
 
 def read_in_points_cif(comm, tree, decomp_domain, clon, hhl, number_of_NN, path_to_file, start_model, end_model, data_vars, accepted_distance):
-    """! Read in the ponts we want to measure for cif on each PE in the own domain and return all of the relevant data needed for computation as dictionaries
-    @param comm                 MPI communicator containing all working PE's
-    @param tree                 A tree with the cells in them that you can query
-    @param decomp_domain        Array with information about which cells are in this PE's prognostic area
-    @param clon                 Array with the cell longitudes
-    @param hhl                  Array with the height of the half levels
-    @param number_of_NN         Number of nearest cells over which should be interpolated
-    @param path_to_file         The path of the input file
-    @param start_model          datetime object depicting the start datetime of the experiment
-    @param end_model            datetime object depicting the end datetime of the experiment
-    @param data_vars            The data dictionary with the data from the simulation
-    @param accepted_distance    Float, distance in km from the nearest found cell that is accepted (i.e. if the point is nowhere near our grid, we reject)
-    @return  Tuple of dicts that symbolize the data to do and the data done
+    """!Read CIF monitoring configuration from CSV and build to-do/done containers.
+
+    Loads station rows, converts times, filters to the model window, broadcasts to all
+    ranks, locates stations via ``find_points_cif``, and allocates
+    ``StationDataToDoCIF`` / ``StationDataDoneCIF`` structures.
+
+    @param comm MPI communicator.
+    @param tree Nearest-neighbor search tree (unit-sphere).
+    @param decomp_domain Decomposition/ownership map per cell.
+    @param clon Grid longitudes array.
+    @param hhl Half-level heights array.
+    @param number_of_NN Number of nearest neighbors for interpolation.
+    @param path_to_file Path to CSV input.
+    @param start_model Experiment start datetime.
+    @param end_model Experiment end datetime.
+    @param data_vars Dict describing variables to compute (used for allocation).
+    @param accepted_distance Maximum accepted distance (km) to closest cell.
+    @return Tuple ``(data_to_do, data_done)`` where each is a class instance.
     """
     if comm.Get_rank() == 0:
         df = pd.read_csv(path_to_file, sep=',')
@@ -931,28 +1133,25 @@ def read_in_points_cif(comm, tree, decomp_domain, clon, hhl, number_of_NN, path_
 
     # Create Dicts with all of the data needed
     number_of_timesteps = np.zeros(N_points, dtype=np.int32)
-    # keys = ['lon', 'lat','elevation', 'sampling_height', 'sampling_strategy', 'jc_loc', 'jb_loc', 'vertical_index1', 'vertical_index2', 'vertical_weight', 'horizontal_weight', 'number_of_steps', 'id', 'stime', 'etime', 'parameter', 'obs']
-    # values = [lons, lats, elevations, sampling_heights, sampling_strategies, jc_loc, jb_loc, vertical_indices_nearest, vertical_indices_second, vertical_weights, horizontal_weights, number_of_timesteps, ids, stimes, etimes, parameters, obs]
-    # data = {keys[i]:values[i] for i in range(len(keys))}
-
     data_to_do = StationDataToDoCIF(lons, lats, elevations, sampling_heights, sampling_strategies, jc_loc, jb_loc, vertical_indices_nearest, vertical_indices_second, vertical_weights, horizontal_weights, number_of_timesteps, ids, stimes, etimes, parameters, obs)
-
-    keys_done = ['lon', 'lat', 'elevation', 'sampling_height', 'sampling_strategy', 'stime', 'etime', 'counter', 'id', 'parameter', 'obs']
-    values_done = [done_lons, done_lats, done_elevations, done_sampling_heights, done_sampling_strategies, done_stimes, done_etimes, done_counter, done_site_names, done_parameters, done_obs]
-    data_done = {keys_done[i]:values_done[i] for i in range(len(keys_done))}
-    
     data_done = StationDataDoneCIF(done_lons, done_lats, done_elevations, done_sampling_heights, done_sampling_strategies, done_stimes, done_etimes, done_counter, done_site_names, done_parameters, done_obs)
 
     return data_to_do, data_done # Return the dicts with the data
 
 def tracking_points(datetime, data_to_do: StationDataToDo, data_done: StationDataDone, data_np, dict_vars, operations_dict):
-    """! Track the chosen variables on the chosen locations and times. Move data that is done being measured to the data_done dictionary
-    @param datetime             Current datetime (np.datetime object)
-    @param data_to_do           The dictionary with the data that needs to be done
-    @param data_done            The dictionary with the data that is done
-    @param data_np              Dictionary containing the variable names (user defined) and the data from the current timestep as numpy arrays
-    @param dict_vars            Dictionary containing the variables, user defined
-    @param operations_dict      Dictionary mapping the names of the signs field in the previous dict to operator. objects
+    """!Accumulate and finalize multi-variable station measurements for the current model time.
+
+    For stations whose time window includes the current model time, perform vertical and
+    horizontal interpolation, accumulate results in ``data_to_do.dict_measurement``,
+    and, when finished (``etime`` passed), move averaged values to ``data_done``.
+
+    @param datetime Current model datetime (``np.datetime64``-compatible).
+    @param data_to_do Pending data container (``StationDataToDo``).
+    @param data_done Completed data container (``StationDataDone``).
+    @param data_np Mapping ``{var_name: list[np.ndarray]}`` of model fields involved in a formula.
+    @param dict_vars Variable recipe dict with ``factor`` and ``signs`` lists per variable.
+    @param operations_dict Mapping from sign string to binary operator (e.g., ``np.add``, ``np.subtract``).
+    @return None.
     """
     if data_to_do.lon.size > 0: # Checks if there is still work to do
         
@@ -1022,13 +1221,19 @@ def tracking_points(datetime, data_to_do: StationDataToDo, data_done: StationDat
 
 
 def tracking_points_cif(datetime, data_to_do: StationDataToDoCIF, data_done: StationDataDoneCIF, data_np, dict_vars, operations_dict):
-    """! Track the chosen parameter on the chosen locations and times for cif. Move data that is done being measured to the data_done dictionary
-    @param datetime             Current datetime (np.datetime object)
-    @param data_to_do           The dictionary with the data that needs to be done
-    @param data_done            The dictionary with the data that is done
-    @param data_np              Dictionary containing the variable names (user defined) and the data from the current timestep as numpy arrays
-    @param dict_vars            Dictionary containing the variables, user defined
-    @param operations_dict      Dictionary mapping the names of the signs field in the previous dict to operator. objects
+    """!Accumulate and finalize CIF station observations for the current model time.
+
+    For each ready station/parameter, evaluate the configured expression using
+    vertical and horizontal interpolation, accumulate into ``data_to_do.obs``,
+    and move finished, averaged values to ``data_done``.
+
+    @param datetime Current model datetime (``np.datetime64``-compatible).
+    @param data_to_do Pending data container (``StationDataToDoCIF``).
+    @param data_done Completed data container (``StationDataDoneCIF``).
+    @param data_np Mapping ``{parameter: list[np.ndarray]}`` of model fields.
+    @param dict_vars Recipe dict per parameter with ``factor`` and ``signs``.
+    @param operations_dict Mapping from sign string to binary operator (e.g., ``np.add``).
+    @return None.
     """
     if data_to_do.lon.size > 0: # Checks if there is still work to do
         

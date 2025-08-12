@@ -21,7 +21,8 @@ export OMP_STACKSIZE=200M
 export FI_CXI_OPTIMIZED_MRS="false"
 
 set -e -x
-export ECCODES_DEFINITION_PATH=/capstor/scratch/cscs/msteiner/spack-c2sm-eiger/spack/opt/spack/linux-sles15-zen2/gcc-12.3/eccodes-2.25.0-yzq4f4flnxd7xhajhnlnfxfsex5j2bhm/share/eccodes/definitions
+#export ECCODES_DEFINITION_PATH=/capstor/scratch/cscs/msteiner/spack-c2sm-eiger/spack/opt/spack/linux-sles15-zen2/gcc-12.3/eccodes-2.25.0-yzq4f4flnxd7xhajhnlnfxfsex5j2bhm/share/eccodes/definitions
+export ECCODES_DEFINITION_PATH=/capstor/scratch/cscs/zhug/spack/opt/spack/linux-sles15-zen2/gcc-13.3.0/eccodes-2.34.0-fkped54gqnv7o6lelj2beskz4usdjbrj/share/eccodes/definitions
 
 export LD_LIBRARY_PATH=/opt/cray/libfabric/1.15.2.0/lib64/:$LD_LIBRARY_PATH
 
@@ -384,29 +385,6 @@ cat > NAMELIST_NWP << EOF
                                 'group:ART_CHEMISTRY',
 /
 
-! output_nml: specifies an output stream --------------------------------------
-&output_nml
- filetype                    =                           4         ! output format: 2=GRIB2, 4=NETCDFv2
- dom                         =                           1         ! write domain 1 only
- output_bounds               =         0., 10000000., 7200.        ! start, end, increment
- steps_per_file              =                           1         ! number of steps per file
- mode                        =                           1         ! 1: forecast mode (relative t-axis), 2: climate mode (absolute t-axis)
- include_last                =                       .TRUE.
- output_filename             =                'ICON-ART-STR'
- filename_format             = '<output_filename>_<datetime>'
- steps_per_file_inclfirst    =                      .FALSE.
- output_grid                 =                        .TRUE.
- remap                       =                            1         ! 1: remap to lat-lon grid
- !north_pole                 =                    -170.,40.       ! definition of north_pole for rotated lat-lon grid
- reg_lon_def                 =                19.6,0.07,30.0
- reg_lat_def                 =              43.27,0.07,48.57
- ml_varlist                  =         'group:nh_prog_vars',
-                                       'group:ATMO_ML_VARS',
-                                           'group:PBL_VARS',
-                                            'z_mc', 'z_ifc','pres_ifc',
-                                            'group:ART_CHEMISTRY',
-/
-
 ! radiation_nml: radiation scheme ---------------------------------------------
 &radiation_nml
  irad_o3                     =                          79         ! ozone climatology
@@ -474,7 +452,7 @@ EOF
 # cp /capstor/scratch/cscs/zhug/Romania6km/input/empty_output_file/output.nc /capstor/scratch/cscs/zhug/Romania6km/simulation_outer_domain/
 
 # cp -p  /capstor/scratch/cscs/zhug/spack/opt/spack/linux-sles15-zen2/gcc-13.3.0/icon-icon-2024.10-dwd-3.0-7i2y5rw27gqzolhlv3lcmtfxelcpdysc/bin/icon icon.exe
-cp -p /capstor/scratch/cscs/zhug/Romania6km/iconzhug icon.exe
+cp -p /capstor/scratch/cscs/zhug/Romania6km/icon2zhug icon.exe
 
 # Load the needed libraries
 # spack load py-numpy

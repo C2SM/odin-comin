@@ -6,6 +6,14 @@ import matplotlib.pyplot as plt
 from netCDF4 import Dataset
 from datetime import datetime, timedelta
 
+plt.rcParams.update({
+    "axes.titlesize": 18,
+    "axes.labelsize": 17,
+    "xtick.labelsize": 15,
+    "ytick.labelsize": 15,
+    "legend.fontsize": 15
+})
+
 # Constants
 Mda, MCH4 = 28.964, 16.04
 nc_file_path = "output.nc"

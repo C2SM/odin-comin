@@ -1,46 +1,38 @@
 #!/usr/bin/env python3
-"""! @brief Plugin for monitoring ICON variables"""
+"""! @file tracker_anything.py
+@brief Tracker plugin for sampling ICON variables using ComIn.
 
+@section description_tracker_anything Description
+Samples ICON variables at defined time points and averages over user-specified
+start and end times for each sampling period. Supports monitoring stations,
+satellite data, and CIF-based station/satellite sampling.
 
-##
-# @mainpage Plugin
-#
-# @section description_main Description
-# Plugin for monitoring ICON variables on different timepoints and averaging over a starting time of the measurement and an ending time of the measurement
-# Also able to track CH4 data from satellite data
-#
-# @section notes_main Notes
-#
-# Copyright (c) 2025 Empa. All rights reserved
+@section libraries_tracker_anything Libraries/Modules
+- comin
+- numpy
+- mpi4py
+- pandas
+  - Access to pandas.to_datetime
+- sys
+- operator
+- scipy
+  - Access to scipy.spatial.KDTree
+- sklearn
+  - Access to sklearn.neighbors.BallTree
+- netCDF4
+  - Access to Dataset
+- yaml
+- datetime
+- satellite (local module)
+- monitoring_stations_final (local module)
 
-##
-# @file tracker_anything.py
-#
-# @brief Tracker for user defined variables using ICON ComIn
-#
-# @section description_tracker_anything Description
-# Tracker for user defined variables using ICON ComIn
-#
-# @section libraries_main Libraries/Modules
-# - comin library
-# - numpy library
-# - mpi4py library
-# - pandas library
-#   - Access to pandas.to_datetime
-# - sys library
-# - operator library
-# - scipy library
-#   - Access to scipy.spatial.KDTree
-# - netCDF4 library
-#   - Access to Dataset
-# - datetime library
-# - satellite module (local)
-# - monitoring_stations_final module (local)
-#
-# @section author_tracker_anything Author(s)
-# - Created by Zeno Hug on 05/23/2025.
-#
-# Copyright (c) 2025 Empa.  All rights reserved.
+@section author_tracker_anything Author(s)
+- Created by Zeno Hug on 05/23/2025.
+
+@section notes_tracker_anything Notes
+Copyright (c) 2025 Empa. All rights reserved.
+"""
+
 
 # Imports
 import comin
@@ -63,16 +55,15 @@ with open('/capstor/scratch/cscs/zhug/Romania6km/python-zeno/config.yaml', 'r') 
 for var, spec in config['dict_vars'].items():
     spec['factor'] = [float(f) for f in spec['factor']]
 
-    # Ensure all factor values are float
 for var, spec in config['dict_vars_cif_sat'].items():
     spec['factor'] = [float(f) for f in spec['factor']]
 
-# Ensure all factor values are float
 for var, spec in config['dict_vars_cif_stations'].items():
     spec['factor'] = [float(f) for f in spec['factor']]
 
 config['accepted_distance']= float(config['accepted_distance'])
-## Global Constants:
+
+## Global Constants from config
 NUMBER_OF_NN = config['NUMBER_OF_NN']
 time_interval_writeout = config['time_interval_writeout']
 jg = config['jg']
@@ -113,19 +104,21 @@ cams_next_data = None
 
 # Functions
 def message(message_string, rank):
-    """! Short helper function to print a message on one PE
-    @param message_string   string, the message which you want to print
-    @param rank             The rank at which the message should be printed
+    """!Print a message from one PE only.
+
+    @param message_string String to print.
+    @param rank PE rank at which to print the message.
     """
     if (comin.parallel_get_host_mpi_rank() == rank):
         print(f"ComIn tracker_anything.py: {message_string}", file=sys.stderr)
 
 
 def lonlat2xyz(lon, lat):
-    """! Short helper function for calculating xyz coordinates from longitues and latitudes
-    @param lon   An array or single value of longitudes to convert to xyz coordinates
-    @param lat   An array or single value of latitudes to convert to xyz coordinates
-    @return  converted xyz values as a tuple
+    """!Convert spherical lon/lat (radians) to unit-sphere Cartesian coordinates.
+
+    @param lon Longitude(s) in radians (scalar or array).
+    @param lat Latitude(s) in radians (scalar or array).
+    @return Tuple (x, y, z) of coordinates.
     """
     clat = np.cos(lat) 
     return clat * np.cos(lon), clat * np.sin(lon), np.sin(lat)
@@ -133,7 +126,11 @@ def lonlat2xyz(lon, lat):
 
 @comin.register_callback(comin.EP_SECONDARY_CONSTRUCTOR)
 def data_constructor():
-    """! Constructor: Get pointers to data
+    """!ComIn secondary constructor: request pointers to required ICON fields.
+
+    Requests monitoring station variables, satellite CH4 fields, CIF variables,
+    and station CIF variables based on configuration flags. Stores references
+    for later use in the time loop.
     """
     global pres, pres_ifc, data, dict_vars, data, CH4_emis, CH4_bg, data_sat_cif, data_stations_cif
     entry_points = [comin.EP_ATM_TIMELOOP_END]
@@ -196,7 +193,11 @@ def data_constructor():
 
 @comin.register_callback(comin.EP_ATM_INIT_FINALIZE)
 def stations_init():
-    """! Initialization: Get data and preprocess all of the data
+    """!Initialize plugin: preprocess domain geometry and read station/satellite metadata.
+
+    Sets up MPI communicator, KDTree for cell centers, ICON polygons for footprint
+    calculations, and calls read-in functions for stations and satellites.  
+    Also writes NetCDF headers for output files.
     """
     global number_of_timesteps, clon, hhl, decomp_domain, tree, num_levels # variables with domain info, and general information
     # All of the monitoring variables
@@ -235,20 +236,22 @@ def stations_init():
     num_levels = domain.nlev
     icon_polygons = []
 
-    for i in range(clon.shape[0]):
-        for j in range(clon.shape[1]):
-            coords = []
-            for k in range(3):
-                    idx = vertex_idx[i, j, k] - 1 # - 1 because fortran indexing starts at 1 and not at 0
-                    blk = vertex_blk[i, j, k] - 1
-                    if idx == -1 and blk == -1:
-                        message(f"Please investigate this cell. It could be interesting: i: {i}, j: {j}, k: {k}, idx: {idx}, blk: {blk}", msgrank)
-                        # continue
-                    message(f"i: {i}, j: {j}, k: {k}, idx: {idx}, blk: {blk}, vlon shape: {vlon.shape}, vlat.shape: {vlat.shape}", msgrank)
-                    lon = vlon[idx, blk]
-                    lat = vlat[idx, blk]
-                    coords.append((lon, lat))
-            icon_polygons.append(Polygon(coords))
+    if do_satellite_CH4:
+        for i in range(clon.shape[0]):
+            for j in range(clon.shape[1]):
+                coords = []
+                for k in range(3):
+                        idx = vertex_idx[i, j, k] - 1 # - 1 because fortran indexing starts at 1 and not at 0
+                        blk = vertex_blk[i, j, k] - 1
+                        # if the indexes are -1, this is an invalid cell, which does not have a positive area. But we still need it in the icon polygons, as we want the same order as clon with all cells of clon, if not we can't compare them anymore
+                        # Also, pure observation showed that if one corner is invalid for a cell, then all of them are. But, this could be a source of error at some point
+                        # if idx == -1 and blk == -1:
+                        #     message(f"Please investigate this cell. It could be interesting: i: {i}, j: {j}, k: {k}, idx: {idx}, blk: {blk}", msgrank)
+                            # continue
+                        lon = vlon[idx, blk]
+                        lat = vlat[idx, blk]
+                        coords.append((lon, lat))
+                icon_polygons.append(Polygon(coords))
     
     # Convert the longitude latitude data to xyz data for the KDTree
     xyz = np.c_[lonlat2xyz(clon.ravel(),clat.ravel())]
@@ -278,7 +281,10 @@ def stations_init():
 
 @comin.register_callback(comin.EP_ATM_TIMELOOP_START)
 def read_in_cams():
-    """! Read in CAMS files on the fly if it is 0, 6, 12 or 18 o'clock
+    """!Read CAMS data if current model time is 0, 6, 12, or 18 UTC.
+
+    Opens the pair of CAMS datasets bracketing the current model time using
+    ``update_cams``.
     """
     # The cams data which will get changed
     global cams_prev_data, cams_next_data
@@ -293,7 +299,11 @@ def read_in_cams():
 
 @comin.register_callback(comin.EP_ATM_TIMELOOP_END)
 def tracking():
-    """! Tracking: Track the data and writeout the done data in intervals
+    """!Main tracking callback: process observations and write results periodically.
+
+    Converts ComIn variable pointers to NumPy arrays, updates monitoring station,
+    satellite CH4, satellite CIF, and station CIF measurements. Writes results to
+    NetCDF when the configured output interval is reached.
     """
     # general info
     global number_of_timesteps, data, dict_vars, operations_dict, dict_vars_cif_stations, dict_vars_cif_sat, data_sat_cif, data_stations_cif
@@ -366,6 +376,8 @@ def tracking():
 
 @comin.register_callback(comin.EP_DESTRUCTOR)
 def destructor():
-    """! Destructor
+    """!Destructor callback: perform final cleanup actions.
+
+    Currently logs that the destructor has been called.
     """
     message("destructor called!", msgrank)

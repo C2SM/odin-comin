@@ -36,6 +36,7 @@ plt.legend()
 plt.grid(True)
 plt.tight_layout()
 plt.xticks(rotation=45)
+plt.subplots_adjust(bottom=0.2)
 plt.savefig('ch4_timeseries.png')
 
 # === PLOT TEMPERATURE ===
@@ -48,4 +49,5 @@ plt.legend()
 plt.grid(True)
 plt.tight_layout()
 plt.xticks(rotation=45)
+plt.subplots_adjust(bottom=0.2)
 plt.savefig('temperature_timeseries.png')
