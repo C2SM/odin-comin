@@ -63,7 +63,7 @@ for var, spec in config['dict_vars_cif_stations'].items():
 
 config['accepted_distance']= float(config['accepted_distance'])
 
-## Global Constants from config
+# Global Constants from config
 NUMBER_OF_NN = config['NUMBER_OF_NN']
 time_interval_writeout = config['time_interval_writeout']
 jg = config['jg']
@@ -94,7 +94,7 @@ if plugin_dir not in sys.path:
 from satellite import *
 from monitoring_stations_final import *
 
-## Defining variables:
+# Defining variables:
 operations_dict = {
     "plus": operator.add,
     "minus": operator.sub,
