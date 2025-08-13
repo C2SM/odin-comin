@@ -48,7 +48,7 @@ import yaml
 import datetime as datetimelib
 
 # Load config
-with open('/capstor/scratch/cscs/zhug/Romania6km/python-zeno/config.yaml', 'r') as file:
+with open('/capstor/scratch/cscs/zhug/Romania6km/plugin/config.yaml', 'r') as file:
     config = yaml.safe_load(file)
 
 # Ensure all factor values are float
