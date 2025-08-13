@@ -128,7 +128,7 @@ cat > NAMELIST_NWP << EOF
 &comin_nml                                                                  
 plugin_list(1)%name          = "comin_plugin"
 plugin_list(1)%plugin_library = "/capstor/scratch/cscs/zhug/icon-nwp/externals/comin/build/plugins/python_adapter/libpython_adapter.so"
-plugin_list(1)%options        = "/capstor/scratch/cscs/zhug/Romania6km/python-zeno/tracker_anything.py"
+plugin_list(1)%options        = "/capstor/scratch/cscs/zhug/Romania6km/plugin/tracker_anything.py"
 
 /
 
@@ -481,7 +481,7 @@ EOF
 # cp /capstor/scratch/cscs/zhug/Romania6km/input/empty_output_file/output.nc /capstor/scratch/cscs/zhug/Romania6km/simulation_outer_domain/
 
 # cp -p  /capstor/scratch/cscs/zhug/spack/opt/spack/linux-sles15-zen2/gcc-13.3.0/icon-icon-2024.10-dwd-3.0-7i2y5rw27gqzolhlv3lcmtfxelcpdysc/bin/icon icon.exe
-cp -p /capstor/scratch/cscs/zhug/Romania6km/iconzhug icon.exe
+cp -p /capstor/scratch/cscs/zhug/Romania6km/testcase/icon-executables/icon2zhug icon.exe
 
 # Load the needed libraries
 # spack load py-numpy
