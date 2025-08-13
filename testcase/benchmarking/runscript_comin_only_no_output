@@ -5,20 +5,32 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-core=1
 #SBATCH --ntasks-per-node=128
-#SBATCH --cpus-per-task=1
 #SBATCH --constraint=mc
-#SBATCH --open-mode=append
+#SBATCH --partition=debug
+#SBATCH --hint=nomultithread
 
 # OpenMP environment variables                                                 
 # ----------------------------                                                 
 
 
-set -x
-export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
+export OMP_NUM_THREADS=1                                                       
+export ICON_THREADS=1                                                          
+export OMP_SCHEDULE=static,12                                                  
+export OMP_DYNAMIC="false"                                                     
+export OMP_STACKSIZE=200M                                                      
+export FI_CXI_OPTIMIZED_MRS="false"
 
+set -e -x
+export ECCODES_DEFINITION_PATH=/capstor/scratch/cscs/msteiner/spack-c2sm-eiger/spack/opt/spack/linux-sles15-zen2/gcc-12.3/eccodes-2.25.0-yzq4f4flnxd7xhajhnlnfxfsex5j2bhm/share/eccodes/definitions
+
+export LD_LIBRARY_PATH=/opt/cray/libfabric/1.15.2.0/lib64/:$LD_LIBRARY_PATH
+
+
+# date=2019100700
+date=2019010100
 
 #basic folders
-WORKDIR=${SCRATCH}/Romania6km
+WORKDIR=${SCRATCH}/Romania6km/testcase
 DATADIR=${WORKDIR}/input
 #grids
 GRIDDIR=${DATADIR}/grid/outer_grid/
@@ -33,7 +45,7 @@ OEMDIR=${DATADIR}/OEM
 # EXPDIR=${WORKDIR}/output_testsim
 EXPDIR=${WORKDIR}/simulation_outer_domain
 #ICON
-ICONDIR=${SCRATCH}/icon-kit-cif-eiger
+ICONDIR=${SCRATCH}/icon-nwp
 
 
 mkdir -p $EXPDIR
@@ -49,6 +61,8 @@ ln -sf ${GRIDDIR}/dyn_grid.nc .
 ln -sf ${GRIDDIR}/lateral_boundary.grid.nc .
 # external parameter
 ln -sf ${EXTPARDIR}/extpar_file.nc .
+# initial and boundary data
+ln -sf ${INIDIR}/era5_${date}.nc era5_init.nc
 # files needed for radiation
 ln -sf ${ICONDIR}/data/ECHAM6_CldOptProps.nc rrtm_cldopt.nc
 ln -sf ${ICONDIR}/data/rrtmg_lw.nc .
@@ -70,7 +84,7 @@ ln -sf ${ARTDIR}/runctrl_examples/init_ctrl/* .
 cat > icon_master.namelist << EOF
 ! master_nml: ----------------------------------------------------------------
 &master_nml
- lrestart                   =                     .TRUE.        ! .TRUE.=current experiment is resumed
+ lrestart                   =                     .FALSE.        ! .TRUE.=current experiment is resumed
 /
 
 &master_time_control_nml
@@ -91,7 +105,7 @@ cat > icon_master.namelist << EOF
 &time_nml
  ! dt_restart                  =      604800
  ini_datetime_string         =      "2019-01-01T00:00:00Z"        ! initial date and time of the simulation
- end_datetime_string         =      "2020-01-01T00:00:00Z"        ! end date and time of the simulation
+ end_datetime_string         =      "2019-01-09T00:00:00Z"        ! end date and time of the simulation
 /
 EOF
 
@@ -102,15 +116,21 @@ EOF
 cat > NAMELIST_NWP << EOF
 ! parallel_nml: MPI parallelization -------------------------------------------
 &parallel_nml
- nproma_sub                  =                        800
- nblocks_c                   =                          1
+ nproma                      =                         16
  p_test_run                  =                     .FALSE.        ! .TRUE. means verification run for MPI parallelization
- num_io_procs                =                          1         ! number of I/O processors
- num_restart_procs           =                          0         ! number of restart processors
+ num_io_procs                =                          3         ! number of I/O processors
+ num_restart_procs           =                          1         ! number of restart processors
  num_prefetch_proc           =                          1         ! number of processors for LBC prefetching
  iorder_sendrecv             =                          3         ! sequence of MPI send/receive calls
 /
 
+! comin_nml: comin tool ---------------------------------------------
+&comin_nml                                                                  
+plugin_list(1)%name          = "comin_plugin"
+plugin_list(1)%plugin_library = "/capstor/scratch/cscs/zhug/icon-nwp/externals/comin/build/plugins/python_adapter/libpython_adapter.so"
+plugin_list(1)%options        = "/capstor/scratch/cscs/zhug/Romania6km/python-zeno/tracker_anything.py"
+
+/
 
 ! run_nml: general switches ---------------------------------------------------
 &run_nml
@@ -126,7 +146,6 @@ cat > NAMELIST_NWP << EOF
  ltimer                      =                      .TRUE.        ! timer for monitoring the runtime of specific routines
  timers_level                =                         10         ! performance timer granularity
  check_uuid_gracefully       =                      .TRUE.        ! give only warnings for non-matching uuids
- output                      =                        "nml"       ! main switch for enabling/disabling components of the model output
  lart                        =                      .True.        ! main switch for ART
  debug_check_level           =                         10
 /
@@ -193,7 +212,7 @@ cat > NAMELIST_NWP << EOF
 &initicon_nml
  init_mode                   =                         2          ! 7: start from DWD fg with subsequent vertical remapping 
  lread_ana                   =                    .FALSE.         ! no analysis data will be read
-! ifs2icon_filename	         =             "era5_init.nc"
+ ifs2icon_filename	         =             "era5_init.nc"
  ana_varnames_map_file       =             "map_file.ana"
  ltile_coldstart             =                      .TRUE.        ! coldstart for surface tiles
  ltile_init                  =                     .FALSE.        ! set it to .TRUE. if FG data originate from run without tiles
@@ -294,7 +313,7 @@ cat > NAMELIST_NWP << EOF
  inwp_convection             =                          1         ! convection
  lshallowconv_only           =                      .FALSE.        ! only shallow convection
  lgrayzone_deepconv          =                      .FALSE.       !
- inwp_radiation              =                          4         ! radiation
+ inwp_radiation              =                          1         ! radiation
  inwp_cldcover               =                          1         ! cloud cover scheme for radiation
  inwp_turb                   =                          1         ! vertical diffusion and transfer
  inwp_satad                  =                          1         ! saturation adjustment
@@ -314,6 +333,9 @@ cat > NAMELIST_NWP << EOF
  dt_conv                     =                          90.       ! time step for convection in s (domain specific)
  dt_sso                      =                          360.       ! time step for SSO parameterization
  dt_gwd                      =                          120.       ! time step for gravity wave drag parameterization
+ lrtm_filename               =        'rrtmg_lw.nc'
+ cldopt_filename             =        'rrtm_cldopt.nc'
+
 /
 
 ! nwp_tuning_nml: additional tuning parameters ----------------------------------
@@ -335,65 +357,8 @@ cat > NAMELIST_NWP << EOF
  max_calibfac_clcl           =                        2.0
 /
 
-! output_nml: specifies an output stream --------------------------------------
-&output_nml
- filetype                    =                          4         ! output format: 2=GRIB2, 4=NETCDFv2
- dom                         =                          1         ! write domain 1 only
- output_bounds               =        0., 10000000000., 3600.        ! start, end, increment
- steps_per_file              =                          1         ! number of steps per file
- mode                        =                          1         ! 1: forecast mode (relative t-axis), 2: climate mode (absolute t-axis)
- include_last                =                      .TRUE.
- output_filename             =                    'ICON-ART-UNSTR'
- filename_format             =    '<output_filename>_<datetime>'  ! file name base
- steps_per_file_inclfirst    =                    .FALSE.
- output_grid                 =                      .TRUE.
- remap                       =                          0         ! 1: remap to lat-lon grid
- !north_pole                 =                   -170.,40.        ! definition of north_pole for rotated lat-lon grid
- ml_varlist                  =  'group:PBL_VARS',
-                                'group:ATMO_ML_VARS',
-                                'group:precip_vars',
-                                'group:land_vars',
-                                'group:nh_prog_vars',
-                                'z_mc', 'z_ifc', 'fis',
-                                'geopot', 'qv', 'fr_land',
-                                'c_t_lk', 'freshsnow', 'fr_seaice',
-                                'h_ice', 'h_ml_lk', 'h_snow', 'qv_s',
-                                'rho_snow', 't_bot_lk', 't_g', 't_ice',
-                                't_mnw_lk', 't_snow', 't_wml_lk',
-                                'w_i', 'w_snow', 'gz0', 'pres_sfc',
-                                'clct','asob_s','aumfl_s','avmfl_s',
-                                't_so', 'w_so', 'w_so_ice',
-                                't_2m', 'smi','pres_ifc',
-                                'topography_c',
-                                'group:ART_CHEMISTRY',                           
-/
-
-! output_nml: specifies an output stream --------------------------------------
-&output_nml
- filetype                    =                           4         ! output format: 2=GRIB2, 4=NETCDFv2
- dom                         =                           1         ! write domain 1 only
- output_bounds               =         0., 1000000000., 7200.        ! start, end, increment
- steps_per_file              =                           1         ! number of steps per file
- mode                        =                           1         ! 1: forecast mode (relative t-axis), 2: climate mode (absolute t-axis)
- include_last                =                       .TRUE.
- output_filename             =                'ICON-ART-STR'
- filename_format             = '<output_filename>_<datetime>'
- steps_per_file_inclfirst    =                      .FALSE.
- output_grid                 =                        .TRUE.
- remap                       =                            1         ! 1: remap to lat-lon grid
- !north_pole                 =                    -170.,40.       ! definition of north_pole for rotated lat-lon grid
- reg_lon_def                 =                19.6,0.07,30.0
- reg_lat_def                 =              43.27,0.07,48.57
- ml_varlist                  =         'group:nh_prog_vars',
-                                       'group:ATMO_ML_VARS',
-                                           'group:PBL_VARS',
-                                            'z_mc', 'z_ifc','pres_ifc',
-                                            'group:ART_CHEMISTRY'
-/
-
 ! radiation_nml: radiation scheme ---------------------------------------------
 &radiation_nml
- ecrad_isolver               =                          2
  irad_o3                     =                          79         ! ozone climatology
  irad_aero                   =                          6         ! aerosols
  albedo_type                 =                          2         ! type of surface albedo
@@ -405,7 +370,6 @@ cat > NAMELIST_NWP << EOF
  vmr_cfc12                   =                    532.e-12
  direct_albedo_water         =                           3
  albedo_whitecap             =                           1
- ecrad_data_path             =     '/capstor/scratch/cscs/msteiner/icon-kit-cif/externals/ecrad/data'
 /
 
 ! sleve_nml: vertical level specification -------------------------------------
@@ -455,5 +419,22 @@ EOF
 # ----------------------------------------------------------------------
 
 
-cp -p /capstor/scratch/cscs/msteiner/icon-kit-cif/gpu/bin/icon icon.exe
+# cp /capstor/scratch/cscs/zhug/Romania6km/input/flights/flight*.csv /capstor/scratch/cscs/zhug/Romania6km/simulation_outer_domain/
+# cp /capstor/scratch/cscs/zhug/Romania6km/input/TROPOMI/TROPOMI_SRON_prs_flipped_20190101_20191231.nc /capstor/scratch/cscs/zhug/Romania6km/simulation_outer_domain/
+# cp /capstor/scratch/cscs/zhug/Romania6km/input/empty_output_file/output.nc /capstor/scratch/cscs/zhug/Romania6km/simulation_outer_domain/
+
+# cp -p  /capstor/scratch/cscs/zhug/spack/opt/spack/linux-sles15-zen2/gcc-13.3.0/icon-icon-2024.10-dwd-3.0-7i2y5rw27gqzolhlv3lcmtfxelcpdysc/bin/icon icon.exe
+cp -p /capstor/scratch/cscs/zhug/Romania6km/iconzhug icon.exe
+
+# Load the needed libraries
+# spack load py-numpy
+spack load py-scipy
+spack load py-xarray
+# spack load py-pandas
+spack load py-mpi4py
+spack load py-netcdf4
+spack load py-pyyaml
+spack load py-scikit-learn
+spack load py-shapely
+
 srun ./icon.exe
