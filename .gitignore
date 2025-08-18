@@ -12,3 +12,4 @@ venv-nc-gen
 simulation_outer_domain_january_sat
 simulation_outer_domain_station
 simulation_outer_domain_flights
+era5_2019*_lbc.nc
