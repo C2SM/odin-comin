@@ -113,10 +113,12 @@ Run ICON with ODIN by adding the plugin to the runscript.
 
 ## Testcase
 A minimal testcase is provided in this repository under testcase/:
+
 	•	ICON domain over Romania at 6 km resolution
 	•	Predefined monitoring stations and satellite inputs
 	•	Example YAML configuration
 	•	Instructions for compiling and running
+    
 Run the testcase to verify your setup and reproduce the workflows described in the thesis.
 
 ## Example Applications
