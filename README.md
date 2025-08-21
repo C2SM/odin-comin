@@ -1,6 +1,6 @@
 # ODIN-ComIn: Online Data Interpolator for ICON-ART
 
-ODIN (Online Data INterpolator) is a plugin for the [ICON-ART atmospheric transport model](https://mpimet.mpg.de/en/science/models/icon-esm/icon-art) that allows direct sampling of model variables at user-defined observation locations **during runtime**. It is implemented using the [ComIn interface](https://comin.readthedocs.io/) and written in Python.
+ODIN (Online Data INterpolator) is a plugin for the ICON-ART atmospheric transport model that allows direct sampling of model variables at user-defined observation locations **during runtime**. It is implemented using the ComIn interface and written in Python.
 
 The plugin enables efficient and reproducible extraction of model output for:
 - **Monitoring stations** (time-averaged or instantaneous)
@@ -30,7 +30,7 @@ To use ODIN within ICON:
 
 4. **Install Python dependencies**:
 
-Detailed build notes for CSCS Eiger are provided in docs/notes.txt.
+Detailed build notes for CSCS Eiger are provided in documentation/notes.txt.
 
 
 ## Configuration
@@ -126,6 +126,10 @@ Run the testcase to verify your setup and reproduce the workflows described in t
 	•	Monitoring stations: Extract CH₄ and temperature at ICOS sites with hourly averaging.
 	•	Aircraft flights: Sample ICON along measured flight tracks at model timestep resolution.
 	•	Satellite retrievals: Generate TROPOMI-equivalent XCH₄ with averaging kernels and CAMS extension.
+
+## Documentation 
+
+The code is commented with Doxygen-comments, so one can compile a documentation on their own with the Doxyfile in documentation
 
 ## Data & Code Availability
 
