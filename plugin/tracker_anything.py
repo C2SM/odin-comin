@@ -352,7 +352,7 @@ def tracking():
     if do_satellite_CH4:
         tracking_CH4_satellite(datetime, CH4_EMIS_np, CH4_BG_np, pres_ifc_np, pres_np, data_satellite_to_do, data_satellite_done, cams_prev_data, cams_next_data)
     if do_satellite_cif:
-        tracking_satellite_cif_pressures(datetime, data_sat_cif_to_do, data_sat_cif_done, data_np_sat_cif, dict_vars_cif_sat, operations_dict, pres_np, num_levels)
+        tracking_satellite_pressures(datetime, data_sat_cif_to_do, data_sat_cif_done, data_np_sat_cif, dict_vars_cif_sat, operations_dict, pres_np, num_levels)
     if do_stations_cif:
         tracking_points_cif(datetime, data_stations_cif_to_do, data_stations_cif_done, data_np_stations_cif, dict_vars_cif_stations, operations_dict)
         

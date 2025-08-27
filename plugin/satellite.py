@@ -973,7 +973,7 @@ def tracking_satellite_cif_same_index(datetime, data_to_do: SatelliteDataToDoGen
             data_to_do.apply_mask(keep_mask)
         
 
-def tracking_satellite_cif_pressures(datetime, data_to_do: SatelliteDataToDoGeneral, data_done: SatelliteDataDoneGeneral, data_np, dict_vars, operations_dict, pres_np, num_levels):
+def tracking_satellite_pressures(datetime, data_to_do: SatelliteDataToDoGeneral, data_done: SatelliteDataDoneGeneral, data_np, dict_vars, operations_dict, pres_np, num_levels):
     """!Compute satellite columns (cif) using pressure-based vertical interpolation.
 
     For each neighbor column, find closest pressure to the target profile,
@@ -1033,7 +1033,7 @@ def tracking_satellite_cif_pressures(datetime, data_to_do: SatelliteDataToDoGene
                             second_pres = pres_np[jc[k], second_index, jb[k]]
                             vertical_weight = 0
                             if second_pres - actual_pressure_closest != 0:
-                                vertical_weight = (this_target_pressure - actual_pressure_closest) / (second_pres - actual_pressure_closest)
+                                vertical_weight = (np.log(this_target_pressure) - np.log(actual_pressure_closest)) / (np.log(second_pres) - np.log(actual_pressure_closest))
 
                             this_cell_interpolation_vertical = ICON_profile[k , best_index] + vertical_weight * (ICON_profile[k, second_index] - ICON_profile[k, best_index])
                             result[j] += data_to_do.weights[ready_mask][i][k] * this_cell_interpolation_vertical
