@@ -68,7 +68,9 @@ spack load py-scipy
 spack load py-xarray
 spack load py-mpi4py
 spack load py-netcdf4
-
+spack load py-pyyaml
+spack load py-scikit-learn
+spack load py-shapely
 
 # In general, as soon as you want to use a new library in your .py file, that isn't installed yet use the following:
 # Activate spack environment
