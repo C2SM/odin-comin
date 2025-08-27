@@ -17,12 +17,6 @@ dict_vars:
     factor: [1]
     unit: "Kelvin"
     long_name: "Temperature"
-  Temp:
-    var_names: ["temp"]
-    signs: []
-    factor: [1]
-    unit: "Kelvin"
-    long_name: "Temperature"
 
 dict_vars_cif_sat:
   CH4:
