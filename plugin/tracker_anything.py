@@ -92,7 +92,7 @@ if plugin_dir not in sys.path:
     sys.path.append(plugin_dir)
 
 from satellite import *
-from monitoring_stations_final import *
+from monitoring_stations import *
 
 # Defining variables:
 operations_dict = {
