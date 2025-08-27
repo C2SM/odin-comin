@@ -852,9 +852,9 @@ def write_header_points_cif(comm, file_name):
 
         # Global attributes
         ncfile.Conventions = "CF-1.8"
-        ncfile.title = "Station output file for ICON ComIn interface XYZ"
+        ncfile.title = "Station output file for ICON ComIn interface ODIN"
         ncfile.institution = "Empa"
-        ncfile.source = "ICON ComIn interface XYZ"
+        ncfile.source = "ICON ComIn interface ODIN"
         ncfile.version = "1.0"
         ncfile.author = "Zeno Hug"
         ncfile.transport_model = "ICON"
@@ -924,9 +924,9 @@ def write_header_points(comm, file_name, dict_vars):
 
         # Global attributes
         ncfile.Conventions = "CF-1.8"
-        ncfile.title = "Station output file for ICON ComIn interface XYZ"
+        ncfile.title = "Station output file for ICON ComIn interface ODIN"
         ncfile.institution = "Empa"
-        ncfile.source = "ICON ComIn interface XYZ"
+        ncfile.source = "ICON ComIn interface ODIN"
         ncfile.version = "1.0"
         ncfile.author = "Zeno Hug"
         ncfile.transport_model = "ICON"

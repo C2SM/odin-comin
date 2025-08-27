@@ -68,9 +68,9 @@ with Dataset(output_file, "w", format="NETCDF4") as nc:
 
     # Global attributes
     nc.Conventions = "CF-1.8"
-    nc.title = "Station input file for ICON ComIn interface XYZ"
+    nc.title = "Station input file for ICON ComIn interface ODIN"
     nc.institution = "Empa"
-    nc.source = "ICON ComIn interface XYZ"
+    nc.source = "ICON ComIn interface ODIN"
     nc.version = "1.0"
     nc.author = "Zeno Hug"
     nc.transport_model = "ICON"
