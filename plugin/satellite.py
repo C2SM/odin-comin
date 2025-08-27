@@ -1154,7 +1154,7 @@ def tracking_CH4_satellite(datetime, CH4_EMIS_np, CH4_BG_np, pres_ifc_np, pres_n
                             second_pres = pres_np[jc[k], second_index, jb[k]]
                             vertical_weight = 0
                             if second_pres - actual_pressure_closest != 0:
-                                vertical_weight = (this_target_pressure - actual_pressure_closest) / (second_pres - actual_pressure_closest)
+                                vertical_weight = (np.log(this_target_pressure) - np.log(actual_pressure_closest)) / (np.log(second_pres) - np.log(actual_pressure_closest))
 
                             this_cell_interpolation_vertical = profiles[k , best_index] + vertical_weight * (profiles[k, second_index] - profiles[k, best_index])
                             result[j] += data_to_do.weights[ready_mask][i][k] * this_cell_interpolation_vertical
