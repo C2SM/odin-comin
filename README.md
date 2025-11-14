@@ -128,9 +128,8 @@ The code is commented with Doxygen-comments, so one can compile a documentation 
 ## Data & Code Availability
 
 The ODIN-ComIn plugin and testcase data are hosted here:
-https://gitlab.com/empa503/atmospheric-modelling/odin-comin.git 
-
-The Bachelor Thesis describing the methods in detail:
+https://github.com/C2SM/odin-comin/
+The Bachelor Thesis describing the methods in detail is included in the documentation/ subfolder:
 ODIN: An online data interpolator for the ICON-ART atmospheric transport model using the ComIn interface (Zeno Hug, 2025)
 
 ⸻
