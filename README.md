@@ -1,15 +1,16 @@
-# ODIN-ComIn: Online Data Interpolator for ICON-ART
+# ODIN-ComIn: Online Data Interpolator for ICON
 
-ODIN (Online Data INterpolator) is a plugin for the ICON-ART atmospheric transport model that allows direct sampling of model variables at user-defined observation locations **during runtime**. It is implemented using the ComIn interface and written in Python.
+ODIN (Online Data INterpolator) is a plugin for the ICON model and for ICON-ART that allows direct sampling of model variables at user-defined observation locations **during runtime**. It is implemented using the ComIn interface and written in Python.
 
 The plugin enables efficient and reproducible extraction of model output for:
 - **Monitoring stations** (time-averaged or instantaneous)
 - **Mobile trajectories** (aircraft, drones, vehicles)
-- **Satellite retrievals** (e.g. TROPOMI CH₄ with averaging kernels and stratospheric extension)
+- **Satellite retrievals** (including possibility of applying averaging kernels)
 
 Key features:
-- Horizontal and vertical interpolation at arbitrary locations
-- Application of averaging kernels and CAMS-based profile extension
+- Horizontal and vertical interpolation to arbitrary locations
+- Application of averaging kernels to satellite observations
+- In case of satellite total columns (e.g. of CH4), possibility to extend profile above top of ICON domain
 - Output directly to structured NetCDF files
 - Fully configured via a YAML file (no code changes required)
 - Parallel scaling with MPI
@@ -34,7 +35,8 @@ Detailed build notes for CSCS Eiger are provided in documentation/notes.txt.
 
 
 ## Configuration
-All runtime options are handled via a YAML configuration file, e.g.:
+All runtime options are handled via a YAML configuration file. The example below corresponds to a test example available upon request.
+In this example, ICON-ART fields are interplated to TROPOMI satellite observations and total columns are extrapolated above the model top using CAMS global model data.
 
 NUMBER_OF_NN: 4
 time_interval_writeout: 3600
