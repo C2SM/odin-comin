@@ -1,6 +1,6 @@
 # ODIN-ComIn: Online Data Interpolator for ICON
 
-ODIN (Online Data INterpolator) is a plugin for the ICON model and for ICON-ART that allows direct sampling of model variables at user-defined observation locations **during runtime**. It is implemented using the ComIn interface and written in Python.
+ODIN (Online Data INterpolator) is a plugin for the ICON model and for ICON-ART that allows direct sampling of model variables at user-defined observation locations **during runtime**. It is implemented using ICON's [ComIn interface](https://docs.icon-model.org/tools/comin/comin.html) and is written in Python.
 
 The plugin enables efficient and reproducible extraction of model output for:
 - **Monitoring stations** (time-averaged or instantaneous)
@@ -8,11 +8,13 @@ The plugin enables efficient and reproducible extraction of model output for:
 - **Satellite retrievals** (including possibility of applying averaging kernels)
 
 Key features:
-- Horizontal and vertical interpolation to arbitrary locations
+- Horizontal inverse distance weighted interpolation to arbitrary locations
+- Vertical interpolation linearly with geometric height
+- Interpolation to satellite observations accurately accounting for overlap between ICON grid cells and satellite pixels
 - Application of averaging kernels to satellite observations
-- In case of satellite total columns (e.g. of CH4), possibility to extend profile above top of ICON domain
-- Output directly to structured NetCDF files
-- Fully configured via a YAML file (no code changes required)
+- Possibility to extend ICON profile above model top using output from another model for comparison with satellite total column observations
+- Output to structured NetCDF files
+- Configuration via a YAML file (no code changes required)
 - Parallel scaling with MPI
 
 ---
@@ -51,12 +53,6 @@ dict_vars:
     factor: [1.0e9, 1.0]
     unit: "ppb"
     long_name: "CH4 concentration"
-  Temp:
-    var_names: ["temp"]
-    signs: []
-    factor: [1]
-    unit: "Kelvin"
-    long_name: "Temperature"
   Temp:
     var_names: ["temp"]
     signs: []
